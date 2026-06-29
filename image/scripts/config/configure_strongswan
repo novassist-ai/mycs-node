@@ -1,6 +1,26 @@
 #!/bin/bash
 
-set -exo pipefail
+configure_strongswan_trace=1
+case "${CONFIGURE_STRONGSWAN_NOTRACE:-}" in
+    1|yes|true) configure_strongswan_trace=0 ;;
+esac
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    argv=()
+    for arg in "$@"; do
+        case "$arg" in
+            -notrace) configure_strongswan_trace=0 ;;
+            *) argv+=("$arg") ;;
+        esac
+    done
+    set -- "${argv[@]}"
+fi
+
+if [[ $configure_strongswan_trace -eq 1 ]]; then
+    set -exo pipefail
+else
+    set -eo pipefail
+fi
 
 SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
 source $SCRIPT_HOME/common

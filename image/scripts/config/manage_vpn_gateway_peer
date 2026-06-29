@@ -2,7 +2,18 @@
 
 set -eo pipefail
 
+DEBUG=0
+argv=()
+for arg in "$@"; do
+    case "$arg" in
+        -d|--debug) DEBUG=1 ;;
+        *) argv+=("$arg") ;;
+    esac
+done
+set -- "${argv[@]}"
+
 SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+[[ $DEBUG -ne 1 ]] && export CONFIGURE_STRONGSWAN_NOTRACE=1
 source "$SCRIPT_HOME/common"
 source "$SCRIPT_HOME/configure_strongswan"
 source "$SCRIPT_HOME/vpn_gateway_common"
@@ -14,7 +25,10 @@ fi
 
 usage() {
     cat <<'EOF'
-Usage: manage_vpn_gateway_peer <command> [args]
+Usage: manage_vpn_gateway_peer [-d|--debug] <command> [args]
+
+Options:
+  -d, --debug        Enable shell trace (set -x)
 
 Commands:
   add <peer.yaml>    Install a peer definition and apply tunnel + routing
