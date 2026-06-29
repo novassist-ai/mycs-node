@@ -1,0 +1,30 @@
+---
+mycs:
+  node_id_key: '${mycs_app_id_key}'
+  key_timeout: 300000
+  auth_retry_timer: 500
+  auth_timeout: 10000
+  idle_shutdown_time: ${app_idle_shutdown_time}
+  num_event_workers: 20
+  event_buffer_size: 1000
+  event_publish_timeout: 5000
+
+data:
+  mount_directory: ${mycs_root_data_dir}
+  mount_app_directory: ${mycs_app_data_dir}
+
+network:
+  space_network:
+    external_routes: ${advertised_external_networks}
+    wan_routes_by_name: ${advertised_external_domain_names}
+
+application:
+  exec_cmd: '${app_exec_cmd}'
+  cmd_arguments: ${app_cmd_arguments}
+  env_arguments: ${app_env_arguments}
+  work_directory: '${app_work_directory}'
+  stop_timeout: ${app_stop_timeout}
+
+  description: ${app_description}
+  domain_name: ${app_domain_name}
+  service_ports: ${app_service_ports}
