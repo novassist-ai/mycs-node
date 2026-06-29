@@ -91,9 +91,6 @@ module "bootstrap" {
   vpn_gateway_enabled    = true
   vpn_gateway_peer_cidrs = ["172.20.64.128/26"]
 
-  # Concourse Port
-  # concourse_server_port = "8080"
-
   # Whether to allow SSH access to bastion server
   bastion_allow_public_ssh = true
 

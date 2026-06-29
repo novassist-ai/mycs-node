@@ -42,7 +42,3 @@ output "bastion_admin_user" {
 output "bastion_admin_password" {
   value = module.bootstrap.bastion_admin_password
 }
-
-output "concourse_admin_password" {
-  value = "Passw0rd"
-}

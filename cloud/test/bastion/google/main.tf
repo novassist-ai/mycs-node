@@ -71,9 +71,6 @@ module "bootstrap" {
 
   vpn_tunnel_all_traffic = "yes"
 
-  # Concourse Port
-  # concourse_server_port = "8080"
-
   # Whether to allow SSH access to bastion server
   bastion_allow_public_ssh = true
 
