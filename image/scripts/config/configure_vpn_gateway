@@ -1,0 +1,32 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+source $SCRIPT_HOME/configure_strongswan
+source $SCRIPT_HOME/vpn_gateway_common
+
+[[ ! -e /usr/local/etc/.vpn_gateway_installed ]] || exit 0
+
+if [[ "${config_vpn_gateway_protocol:-ipsec}" != "ipsec" ]]; then
+  echo "ERROR! Unsupported vpn_gateway protocol: ${config_vpn_gateway_protocol}"
+  exit 1
+fi
+
+if ! network_vpn_gateway_enabled \
+  && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+  && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+  echo "Skipping VPN gateway setup (disabled and no peers defined)."
+  exit 0
+fi
+
+mkdir -p "$VPN_GATEWAY_PEERS_DIR"
+
+vpn_gateway_ensure_swanctl_base
+vpn_gateway_install_cli
+vpn_gateway_install_boot_service
+vpn_gateway_apply_all
+
+set +ex
+touch /usr/local/etc/.vpn_gateway_installed

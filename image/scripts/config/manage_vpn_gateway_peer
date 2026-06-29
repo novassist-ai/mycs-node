@@ -1,0 +1,79 @@
+#!/bin/bash
+
+set -eo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source "$SCRIPT_HOME/common"
+source "$SCRIPT_HOME/configure_strongswan"
+source "$SCRIPT_HOME/vpn_gateway_common"
+
+if [[ $(whoami) != root ]]; then
+    echo -e "\nThis script needs to be run as root.\n" >&2
+    exit 1
+fi
+
+usage() {
+    cat <<'EOF'
+Usage: manage_vpn_gateway_peer <command> [args]
+
+Commands:
+  add <peer.yaml>    Install a peer definition and apply tunnel + routing
+  remove <name>      Remove a peer by name
+  list               List configured peers
+  apply              Regenerate swanctl, nftables, and reload strongSwan
+
+Peer YAML (required keys: name, host, local_cidr, remote_cidr, direction, auth):
+
+  name: aws-us-east-1
+  host: test-us-east-1.aws.appbricks.io
+  remote_id: test-us-east-1.aws.appbricks.io
+  local_cidr: 172.20.64.128/26
+  remote_cidr: 172.20.9.192/26
+  direction: egress          # egress | ingress | bidirectional
+  auth: cert                 # cert | psk
+
+For egress and bidirectional peers, road-warrior clients (vpn.subnet) may also
+reach remote_cidr through the gateway, in addition to local_cidr hosts.
+
+For ingress and bidirectional peers, set remote_peer_vpn_subnet to the remote
+bastion's road-warrior subnet so encrypted traffic from those clients is accepted:
+
+  remote_peer_vpn_subnet: 192.168.111.0/24
+
+  remote_ca: aws-root-ca.pem
+  remote_ca_pem: |
+    -----BEGIN CERTIFICATE-----
+    ...
+  remote_ca_file: /path/to/ca.pem   # optional alternative to remote_ca_pem
+  psk: ""                   # required when auth=psk
+
+Global IKE/local identity defaults come from vpn_gateway settings in /etc/mycs/config.yml.
+EOF
+}
+
+cmd=${1:-}
+arg=${2:-}
+
+case "$cmd" in
+    add)
+        vpn_gateway_peer_add "$arg"
+        ;;
+    remove)
+        vpn_gateway_peer_remove "$arg"
+        ;;
+    list)
+        vpn_gateway_list_peers
+        ;;
+    apply)
+        vpn_gateway_apply_all
+        echo "VPN gateway peers applied."
+        ;;
+    -h|--help|help|"")
+        usage
+        ;;
+    *)
+        echo "ERROR! unknown command: $cmd" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

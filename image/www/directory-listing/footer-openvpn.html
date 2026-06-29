@@ -1,0 +1,62 @@
+  </main>
+
+  <footer>
+    <!--
+      Add any other listing related copyright content here
+    -->
+
+    <div align="left" style="padding-left: 0.2rem; padding-right: 0.2rem;">
+      <h2><strong>Installation Instructions</strong></h2>
+      <p>The OpenVPN configuration does two factor authentication using both a user/password and client certificate. Once a VPN client is configured the same user and password used to access this page should be used to log in to the VPN.</p> 
+      <p>The OpenVPN Connect client for Microsoft Windows and Apple OSX can be downloaded directly from the <a title="OpenVPN Client" href="https://apple.co/31VXmAx">OpenVPN website</a>. Once downloaded you can import the <em><strong><code>*.ovpn</code></strong></em> file available for download in the list above. Alternate clients are made available for download in case you are unable to download directly from the OpenVPN website.</p>
+      The <em><strong><code>*.ovpn</code></strong></em> configuration does not containing the ability to connect via the obfuscation tunnel if configured on the server, as the mobile and standard OpenVPN clients do not support the specific MTU settings required. You can extract a configuration setup to connect via multiple local tunnel endpoints with fail-over to the remote endpoint using the <em><strong><code>client.conf</code></strong></em> file which can be found in the the <em><strong><code>*.tblk</code></strong></em> folder within the <em><strong><code>openvpn-config.tunnelblick.zip</code></strong></em> archive.
+      Other installation methods are outlined below.</p>
+      <p><strong>Android</strong></p>
+      <p>For Android devices you need to install the OpenVPN client application from the <a title="OpenVPN" href="https://bit.ly/2MgksOa">Google Appstore</a>. Once installed&nbsp;download <em><strong><code>*.ovpn</code></strong></em> file directly to the device by clicking on the link above. This should popup a dialog asking you to import the configuration into the OpenVPN client application. If you do not wish to re-enter the credentials each time you connect you can save the user and password in the OpenVPN App by editing the imported profile.</p>
+      <p><strong>Apple IOS</strong></p>
+      <p>For Apple IOS devices you need to install the OpenVPN client application from the <a title="OpenVPN App" href="https://apple.co/31VXmAx">Apple Appstore</a>. Once installed&nbsp;download the <em><strong><code>openvpn-config.mobileconfig</code></strong></em> profile directly to the device by clicking on the link above. Then follow the steps to install the profile, which will appear as a line item in your IOS settings App. Once the profile has been installed the VPN connection can be initiated from the OpenVPN App. If you do not wish to reenter the credentials each time you connect you can save the user and password in the OpenVPN App by editing the imported profile.</p>
+      <p><strong>Apple OSX</strong></p>
+      <p>For Apple OSX MacBooks install the <a title="Tunnelblick" href="https://bit.ly/1FxyaTT">Tunnelblick VPN client.</a> Once installed download the <em><strong><code>openvpn-config.tunnelblick.zip</code></strong></em> file and unzip it. Next doubleclick on the <em><strong><code>*.tblk</code></strong></em> artifact that is extracted from the archive to install the configuration to the Tunnelblick client.&nbsp;&nbsp;</p>
+      <p><strong>Microsoft Windows</strong></p>
+      <p>For Microsoft Windows download and install the correct client for the version of Windows you are using from the list of three MSIs above. Once installed simply download and unzip the <em><strong><code>openvpn-config.tunnelblick.zip</code></strong></em> to the config folder within the VPN client's installation folder.</p>
+      <p>&nbsp;</p>
+    </div>
+
+  </footer>
+  
+  <script>
+    function joinUntil(array, index, separator) {
+      var result = [];
+
+      for (var i = 0; i <= index; i++) {
+        result.push(array[i]);
+      }
+
+      return result.join(separator);
+    }
+
+    // Make all the icon links unfocusable with tab
+    var iconLinks = document.querySelectorAll('.indexcolicon a');
+    Array.prototype.forEach.call(iconLinks, function(link) {
+      link.setAttribute('tabindex', '-1');
+    });
+
+    var path = document.querySelector('.js-path');
+    var pathParts = location.pathname.split('/');
+
+    // Removing empty strings
+    for (var i = 0; i < pathParts.length;) {
+      if (pathParts[i]) {
+        i++;
+      } else {
+        pathParts.splice(i, 1);
+      }
+    }
+
+    var pathContents = ['<a href="/">/</a>'];
+    Array.prototype.forEach.call(pathParts, function(part, index) {
+      pathContents.push('<a href="/' + joinUntil(pathParts, index, '/') + '">' + decodeURI(part) + '</a>');
+    });
+
+    path.innerHTML = pathContents.join('&rsaquo;');
+  </script>

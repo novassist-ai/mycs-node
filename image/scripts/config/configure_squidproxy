@@ -1,0 +1,46 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.squidproxy_installed ]] || exit 0
+
+if [[ -z $config_squidproxy_port ]]; then
+  echo "Skipping Proxy setup as no proxy configuration found."
+  exit 0
+fi
+
+if [[ -e /etc/squid/squid.conf.original ]]; then
+  cp /etc/squid/squid.conf.original /etc/squid/squid.conf
+else
+  cp /etc/squid/squid.conf /etc/squid/squid.conf.original
+fi
+
+network_acl="\n"
+for n in $(echo $config_squidproxy_networks | sed "s/,/ /g")
+do
+  network_acl="${network_acl}\nacl client src $n"
+done
+
+custom_headers=""
+for h in $(echo $config_squidproxy_custom_headers_allowed | sed "s/,/ /g")
+do
+  custom_headers="${custom_headers}\nrequest_header_access $h allow all"
+done
+
+sed -i 's|^acl SSL_ports port 443|#acl SSL_ports port 443|' /etc/squid/squid.conf
+sed -i 's|^http_access deny CONNECT !SSL_ports|#http_access deny CONNECT !SSL_ports|' /etc/squid/squid.conf
+
+sed -i "s|^acl CONNECT method CONNECT$|acl CONNECT method CONNECT$network_acl|" /etc/squid/squid.conf
+sed -i "s|^http_access allow localhost$|http_access allow localhost\nhttp_access allow client|" /etc/squid/squid.conf
+sed -i "s|^# forwarded_for on$|# forwarded_for on\nforwarded_for off|" /etc/squid/squid.conf
+sed -i "s|^#  TAG: reply_header_access$|request_header_access Allow allow all\nrequest_header_access Authorization allow all\nrequest_header_access WWW-Authenticate allow all\nrequest_header_access Proxy-Authorization allow all\nrequest_header_access Proxy-Authenticate allow all\nrequest_header_access Cache-Control allow all\nrequest_header_access Content-Encoding allow all\nrequest_header_access Content-Length allow all\nrequest_header_access Content-Type allow all\nrequest_header_access Date allow all\nrequest_header_access Expires allow all\nrequest_header_access Host allow all\nrequest_header_access If-Modified-Since allow all\nrequest_header_access Last-Modified allow all\nrequest_header_access Location allow all\nrequest_header_access Pragma allow all\nrequest_header_access Accept allow all\nrequest_header_access Accept-Charset allow all\nrequest_header_access Accept-Encoding allow all\nrequest_header_access Accept-Language allow all\nrequest_header_access Content-Language allow all\nrequest_header_access Mime-Version allow all\nrequest_header_access Retry-After allow all\nrequest_header_access Title allow all\nrequest_header_access Connection allow all\nrequest_header_access Proxy-Connection allow all\nrequest_header_access User-Agent allow all\nrequest_header_access Cookie allow all${custom_headers}\nrequest_header_access All deny all\n\n#  TAG: reply_header_access|" /etc/squid/squid.conf
+sed -i "s|^http_port .*|http_port $config_squidproxy_port|" /etc/squid/squid.conf
+
+systemctl enable squid
+systemctl start squid
+
+set +ex
+touch /usr/local/etc/.squidproxy_installed

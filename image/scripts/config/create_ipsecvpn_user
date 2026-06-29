@@ -1,0 +1,324 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+if [[ `whoami` != "root" ]]; then 
+  echo -e "\nThis script needs to be run as root.\n"
+  exit 1
+fi
+
+if [[ -z "$1" || -z "$2" ]]; then
+  echo -e "\nUsage: create_vpn_user user password [ssh_public_key] [legacy|modern]\n"
+  echo "  legacy  - PKCS#12 export via OpenSSL 1.1 (default, macOS compatible)"
+  echo "  modern  - PKCS#12 export via system OpenSSL"
+  exit 1
+fi
+
+user=$1
+password=$2
+user_home=/data/users/home/$user
+ssh_public_key=
+pkcs12_mode=
+
+if [[ -n $3 ]]; then
+  if [[ $3 == legacy || $3 == modern ]]; then
+    pkcs12_mode=$3
+  else
+    ssh_public_key=$3
+    [[ $4 == legacy || $4 == modern ]] && pkcs12_mode=$4
+  fi
+fi
+
+function cert_subject_cn {
+  ssl_cert_subject_cn "$1"
+}
+
+function mobileconfig_xml_escape {
+  local value=$1
+  value=${value//&/&amp;}
+  value=${value//</&lt;}
+  value=${value//>/&gt;}
+  echo "$value"
+}
+
+function mobileconfig_cert_der_base64 {
+  openssl x509 -in "$1" -outform DER | base64 -w 0
+}
+
+function create_user_pkcs12 {
+  local mode=$1
+  local temp_dir=$(mktemp -d)
+
+  cp $user_key_pem_path $temp_dir/user_key.pem
+  cp $user_cert_pem_path $temp_dir/user_cert.pem
+  cp /etc/ssl/certs/bastion_ca.pem $temp_dir/root_cert.pem
+  chmod -R 0777 $temp_dir
+
+  if [[ $mode == modern ]]; then
+    openssl pkcs12 -export \
+      -inkey $temp_dir/user_key.pem \
+      -in $temp_dir/user_cert.pem \
+      -name "${user}'s VPN Certificate" \
+      -caname "$cacert_cn" \
+      -certfile $temp_dir/root_cert.pem \
+      -passout pass:"$password" \
+      -out $temp_dir/${user}.p12
+  else
+    docker run \
+      --rm -v $temp_dir:/tmp -v /data:/data \
+      shamelesscookie/openssl:1.1.1s pkcs12 -export \
+        -inkey /tmp/user_key.pem \
+        -in /tmp/user_cert.pem \
+        -name "${user}'s VPN Certificate" \
+        -caname "$cacert_cn" \
+        -certfile /tmp/root_cert.pem \
+        -passout pass:"$password" \
+        -out /tmp/${user}.p12
+  fi
+
+  mv $temp_dir/${user}.p12 ${user_home}/${user}.p12
+  rm -fr $temp_dir
+}
+
+if [[ -e ${user_home}/${user}.p12 ]]; then
+  echo "User '${user}' is already configured."
+  exit 0
+fi
+
+set +e
+id $user >/dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+  password_hash=$(mkpasswd "$password")
+  useradd $user -p $password_hash -m -d $user_home -s /bin/bash
+else
+  set -e
+fi
+
+if [[ -n $ssh_public_key ]]; then
+  echo "$ssh_public_key" > $user_home/.ssh/authorized_keys
+
+  grep -q "^AllowUsers $user" /etc/ssh/sshd_config \
+    || echo -e "AllowUsers $user" >> /etc/ssh/sshd_config
+
+  service sshd restart
+fi
+
+if [[ -e /etc/apache2 ]]; then
+
+  APACHE_USER_CONFIG=/data/users/etc/apache2
+  mkdir -p $APACHE_USER_CONFIG
+  cat << ---EOF > ${APACHE_USER_CONFIG}/$user.conf
+<Directory $user_home>
+  AuthType Basic
+  AuthName "Restricted Area"
+  AuthBasicProvider external
+  AuthExternal pwauth
+  AllowOverride All
+  Require user $user
+  Options +Indexes
+</Directory>
+---EOF
+
+  cp /var/www/html/directory-listing/htaccess-ipsec.txt $user_home/.htaccess
+  systemctl restart apache2
+fi
+
+#
+# Create user's VPN credentials 
+# and client configuration files
+#
+
+STRONGSWAN_CONFIG=$STRONGSWAN_DATA_HOME/etc
+
+if [[ -e $STRONGSWAN_CONFIG/serverinfo ]]; then
+  source $STRONGSWAN_CONFIG/serverinfo
+elif [[ -e /data/ipsecvpn/etc/serverinfo ]]; then
+  source /data/ipsecvpn/etc/serverinfo
+else
+  echo "ERROR! VPN serverinfo not found (run configure_strongswan first)."
+  exit 1
+fi
+
+[[ -n $pkcs12_mode ]] || pkcs12_mode=legacy
+if [[ $pkcs12_mode != legacy && $pkcs12_mode != modern ]]; then
+  echo "ERROR! Invalid PKCS#12 mode: $pkcs12_mode (use legacy or modern)."
+  exit 1
+fi
+
+cacert_cn=$(cert_subject_cn /etc/ssl/certs/bastion_ca.pem)
+server_cacert_data=$(mobileconfig_cert_der_base64 /etc/ssl/certs/bastion_ca.pem)
+server_cacert_cn=$cacert_cn
+server_cert_cn=$(cert_subject_cn /etc/ssl/certs/bastion_cert.pem)
+mobileconfig_password=$(mobileconfig_xml_escape "$password")
+
+strongswan_ensure_data_dirs
+
+# Create user's authentication certificate
+user_key_der_path=$STRONGSWAN_DATA_HOME/private/${user}.der
+user_key_pem_path=$STRONGSWAN_DATA_HOME/private/${user}.pem
+user_cert_der_path=$STRONGSWAN_DATA_HOME/x509/${user}.der
+user_cert_pem_path=$STRONGSWAN_DATA_HOME/x509/${user}.pem
+
+strongswan_pki --gen --type rsa --size 4096 --outform der > $user_key_der_path
+openssl rsa -inform DER -in $user_key_der_path -outform PEM -out $user_key_pem_path
+chmod 0600 $user_key_der_path $user_key_pem_path
+
+strongswan_pki --pub --in $user_key_der_path --type rsa \
+  | strongswan_pki --issue \
+    --lifetime 3650 \
+    --cacert /etc/ssl/certs/bastion_ca.pem \
+    --cakey /etc/ssl/certs/bastion_ca_key.pem \
+    --dn "C=${vpn_server_cert_country}, O=${vpn_server_cert_org}, CN=${user}" --san "$user" --outform der \
+    > $user_cert_der_path
+openssl x509 -inform DER -in $user_cert_der_path -outform PEM -out $user_cert_pem_path
+
+create_user_pkcs12 "$pkcs12_mode"
+strongswan_sync_user_creds "$user"
+
+user_cert_data=$(cat ${user_home}/${user}.p12 | base64 -w 0)
+
+# Create mobileconfig file for ios and osx
+
+payload_uuid=$(uuidgen)
+vpn_payload_uuid=$(uuidgen)
+vpn_cert_payload_uuid=$(uuidgen)
+vpn_ca_payload_uuid=$(uuidgen)
+
+cat << ---EOF > ${user_home}/${vpn_server_description}.mobileconfig
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE plist PUBLIC '-//Apple//DTD PLIST 1.0//EN' 'http://www.apple.com/DTDs/PropertyList-1.0.dtd'>
+<plist version='1.0'>
+<dict>
+  <key>PayloadDisplayName</key><string>IKEv2 VPN - ${vpn_server_description}</string>
+  <key>PayloadType</key><string>Configuration</string>
+  <key>PayloadIdentifier</key><string>io.appbricks.ikev2vpn.${payload_uuid}</string>
+  <key>PayloadUUID</key><string>${payload_uuid}</string>
+  <key>PayloadVersion</key><integer>1</integer>
+  <key>PayloadRemovalDisallowed</key><false/>  
+  <key>PayloadContent</key>
+  <array>
+
+    <!-- VPN Configuration -->
+    <dict>
+      <key>PayloadDisplayName</key><string>VPN Configuration (${server_cert_cn})</string>
+      <key>PayloadDescription</key><string>Configures IKEv2/IPSec VPN settings</string>
+      <key>PayloadType</key><string>com.apple.vpn.managed</string>
+      <key>PayloadIdentifier</key><string>com.apple.vpn.managed.${vpn_payload_uuid}</string>
+      <key>PayloadUUID</key><string>${vpn_payload_uuid}</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>UserDefinedName</key><string>${vpn_server_description}</string>
+      <key>VPNType</key><string>IKEv2</string>
+
+      <key>IKEv2</key>
+      <dict>
+        <key>RemoteAddress</key><string>${vpn_server}</string>
+        <key>RemoteIdentifier</key><string>${server_cert_cn}</string>
+				<key>ServerCertificateCommonName</key><string>${server_cert_cn}</string>
+				<key>ServerCertificateIssuerCommonName</key><string>${server_cacert_cn}</string>        
+
+        <!-- Identifier must match CN of user's certificate for certificate based user authentication -->
+        <key>LocalIdentifier</key><string>${user}</string>
+        
+        <!-- Password based user authentication (eap-mschapv2) -->
+        <!--
+        <key>AuthName</key><string>${user}</string>
+        <key>AuthPassword</key><string>****</string>
+        -->
+
+        <!-- Certificate based user authentication (IKE pubkey; ExtendedAuthEnabled=false) -->
+        <key>AuthenticationMethod</key><string>Certificate</string>
+        <key>PayloadCertificateUUID</key><string>${vpn_cert_payload_uuid}</string>
+        <key>ExtendedAuthEnabled</key><false/>
+
+        <key>DeadPeerDetectionRate</key><string>Medium</string>
+        <key>UseConfigurationAttributeInternalIPSubnet</key><integer>0</integer>
+        <key>DisableMOBIKE</key><integer>0</integer>
+        <key>DisableRedirect</key><integer>0</integer>
+        <key>EnablePFS</key><integer>0</integer>
+        <key>EnableCertificateRevocationCheck</key><integer>0</integer>
+        
+        <key>OnDemandEnabled</key><integer>0</integer>
+        <key>OnDemandRules</key>
+        <array>
+          <dict>
+            <key>Action</key>
+            <string>Connect</string>
+          </dict>
+        </array>
+
+        <key>IKESecurityAssociationParameters</key>
+        <dict>
+          <key>EncryptionAlgorithm</key><string>AES-256-GCM</string>
+          <key>DiffieHellmanGroup</key><integer>21</integer>
+          <key>LifeTimeInMinutes</key><integer>1440</integer>
+        </dict>
+        <key>ChildSecurityAssociationParameters</key>
+        <dict>
+          <key>EncryptionAlgorithm</key><string>AES-256-GCM</string>
+          <key>DiffieHellmanGroup</key><integer>21</integer>
+          <key>LifeTimeInMinutes</key><integer>720</integer>
+        </dict>
+      </dict>
+
+      <key>IPv4</key>
+      <dict>
+        <key>OverridePrimary</key>
+        <integer>1</integer>
+      </dict>
+
+      <key>Proxies</key>
+      <dict>
+        <key>HTTPEnable</key>
+        <integer>0</integer>
+        <key>HTTPSEnable</key>
+        <integer>0</integer>
+      </dict>
+    </dict>
+
+    <!-- User Authentication Certificate -->
+    <dict>
+      <key>PayloadDisplayName</key><string>User Certificate</string>
+      <key>PayloadDescription</key><string>Adds a PKCS#12-formatted certificate</string>
+      <key>PayloadType</key><string>com.apple.security.pkcs12</string>
+      <key>PayloadIdentifier</key><string>com.apple.security.pkcs12.${vpn_cert_payload_uuid}</string>
+      <key>PayloadUUID</key><string>${vpn_cert_payload_uuid}</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>PayloadCertificateFileName</key><string>${user}.p12</string>
+      <key>Password</key><string>${mobileconfig_password}</string>
+      <key>PayloadContent</key><data>${user_cert_data}</data>
+    </dict>
+
+    <!-- Server Certificate Chain -->
+    <dict>
+      <key>PayloadDisplayName</key><string>Server CA</string>
+      <key>PayloadDescription</key><string>Adds a CA root certificate and/or chain</string>
+      <key>PayloadType</key><string>com.apple.security.root</string>
+      <key>PayloadIdentifier</key><string>com.apple.security.root.${vpn_ca_payload_uuid}</string>
+      <key>PayloadUUID</key><string>${vpn_ca_payload_uuid}</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>PayloadCertificateFileName</key><string>bastion_ca.cer</string>
+      <key>PayloadContent</key><data>${server_cacert_data}</data>
+    </dict>
+
+  </array>
+</dict>
+</plist>
+---EOF
+
+# Fix file permission so Apache 
+# can list this directory
+chown -R $user:$user $user_home
+chmod 0755 ${user_home}
+chmod 0644 ${user_home}/*
+
+# Backup all system user files
+cp /etc/passwd /data/users/etc
+cp /etc/shadow /data/users/etc
+cp /etc/group /data/users/etc
+cp /etc/gshadow /data/users/etc
+cp /etc/ssh/sshd_config /data/users/etc/ssh
+
+set +e

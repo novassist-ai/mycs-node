@@ -1,0 +1,105 @@
+#!/bin/bash -x
+
+echo "waiting 5 minutes for cloud-init to finish boot"
+timeout 300 /bin/bash -c \
+  'until stat /var/lib/cloud/instance/boot-finished 2>/dev/null; do echo waiting ...; sleep 10; done'
+
+if [[ $? -ne 0 ]]; then
+  echo "Timed out waiting for cloud-init to complete boot phase."
+  exit 1
+fi
+
+set -xo pipefail
+
+INIT_LIB_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# If config file provided then use it otherwise
+# it will be read from the meta-data service
+if [[ -e /usr/local/etc/bastion-config.yml ]]; then
+  mv /usr/local/etc/bastion-config.yml /etc/mycs/config.yml
+  chown mycs /etc/mycs/config.yml
+  chmod 0600 /etc/mycs/config.yml
+
+  cp /etc/ssl/certs/bastion_ca.pem /etc/mycs/local-ca-root.pem
+  chown mycs /etc/mycs/local-ca-root.pem
+fi
+
+# Ensure all logs are only read-writable by super-user
+touch /var/log/mount_volume.log
+touch /var/log/configure_users.log
+touch /var/log/configure_network.log
+touch /var/log/configure_docker.log
+touch /var/log/configure_powerdns.log
+touch /var/log/configure_smtp.log
+touch /var/log/configure_apache.log
+touch /var/log/configure_openvpn.log
+touch /var/log/configure_strongswan.log
+touch /var/log/configure_wireguard.log
+touch /var/log/configure_vpn_gateway.log
+touch /var/log/configure_squidproxy.log
+
+chmod 0600 /var/log/init_instance.log
+chmod 0600 /var/log/configure_*.log
+chmod 0600 /var/log/cloud-init*.log
+
+#
+# Run configuration scripts
+#
+
+init_failed=false
+init_dump_enabled=true
+
+function init_instance_write_network_dump {
+  [[ $init_dump_enabled == true ]] || return 0
+
+  # shellcheck source=/dev/null
+  source "$INIT_LIB_DIR/network_dump"
+
+  local status=success
+  [[ $init_failed == true ]] && status=failed
+  network_configuration_dump "$NETWORK_CONFIGURATION_DUMP" "$status"
+}
+
+trap init_instance_write_network_dump EXIT
+
+function run_config_script {
+  local script=$1
+  local log=/var/log/${script}.log
+  local log_bak=/var/log/${script}-bak.log
+  local status
+
+  if [[ -f $log && -s $log ]]; then
+    cat "$log" >> "$log_bak"
+    : > "$log"
+  fi
+
+  /usr/local/lib/cloud-inceptor/$script 2>&1 | tee "$log"
+  status=${PIPESTATUS[0]}
+  if [[ $status -ne 0 ]]; then
+    echo "ERROR! Script $script exited with error: $status" >&2
+    init_failed=true
+    return 1
+  fi
+}
+
+run_config_script mount_volume
+run_config_script configure_network
+run_config_script configure_users
+run_config_script configure_apache
+run_config_script configure_docker
+run_config_script configure_powerdns
+run_config_script configure_smtp
+run_config_script configure_openvpn
+run_config_script configure_strongswan
+run_config_script configure_wireguard
+run_config_script configure_vpn_gateway
+run_config_script configure_squidproxy
+run_config_script configure_mycsnode
+
+if [[ $init_failed == true ]]; then
+  echo "ERROR! init_instance completed with script failures." >&2
+  exit 1
+fi
+
+set +ex
+touch /usr/local/etc/.init_instance_complete

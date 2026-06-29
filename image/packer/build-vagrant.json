@@ -1,0 +1,61 @@
+{
+    "required_plugins": {
+        "vagrant": {
+            "version": ">= 1.0.0",
+            "source": "github.com/hashicorp/vagrant"
+        }
+    },
+    "variables": {
+        "name": "",
+        "version": "",
+        "base_image": "",
+        "build_dir": ""
+    },
+    "builders": [
+        {
+            "type": "vagrant",
+            "source_path": "{{user `base_image`}}",
+            "output_dir": "{{user `build_dir`}}/.build",
+            "box_name": "{{user `name`}}_{{user `version`}}",
+            "provider": "virtualbox",
+            "teardown_method": "destroy",
+            "communicator": "ssh",
+            "add_clean": true,
+            "add_force": true
+        }
+    ],
+    "provisioners": [
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/.download",
+            "destination": "/tmp/download"
+        },
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/scripts/config",
+            "destination": "/tmp/inceptor-scripts"
+        },
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/www",
+            "destination": "/tmp/www-static-home"
+        },
+        {
+            "type": "shell",
+            "expect_disconnect": "true",
+            "inline_shebang": "/bin/bash -x",
+            "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+            "inline": [ 
+                "chmod +x /tmp/inceptor-scripts/*",
+                "/tmp/inceptor-scripts/install_packages" 
+            ]
+        }
+    ],
+    "post-processors": [
+        {
+            "type": "vagrant-cloud",
+            "box_tag": "appbricks/appbricks-bastion",
+            "version": "{{user `version`}}"
+        }
+    ]
+}

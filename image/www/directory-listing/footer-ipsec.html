@@ -1,0 +1,52 @@
+  </main>
+
+  <footer>
+    <!--
+      Add any other listing related copyright content here
+    -->
+
+    <div align="left" style="padding-left: 0.2rem; padding-right: 0.2rem;">
+      <h2><strong>Installation Instructions</strong></h2>
+      <p><strong>Apple IOS and OSX</strong></p>
+      <p>For Apple IOS devices and MacBook laptops download the&nbsp;<em><strong><code>*.mobileconfig</code></strong></em>&nbsp;profile directly to the device by clicking on the link above and follow the steps to install the profile. For IOS devices it will appear as a line item in your IOS settings App which can then be imported. For OSX a dialog will pop-up and you will be prompted to install the profile</p>
+      <p>&nbsp;</p>
+    </div>
+
+  </footer>
+  
+  <script>
+    function joinUntil(array, index, separator) {
+      var result = [];
+
+      for (var i = 0; i <= index; i++) {
+        result.push(array[i]);
+      }
+
+      return result.join(separator);
+    }
+
+    // Make all the icon links unfocusable with tab
+    var iconLinks = document.querySelectorAll('.indexcolicon a');
+    Array.prototype.forEach.call(iconLinks, function(link) {
+      link.setAttribute('tabindex', '-1');
+    });
+
+    var path = document.querySelector('.js-path');
+    var pathParts = location.pathname.split('/');
+
+    // Removing empty strings
+    for (var i = 0; i < pathParts.length;) {
+      if (pathParts[i]) {
+        i++;
+      } else {
+        pathParts.splice(i, 1);
+      }
+    }
+
+    var pathContents = ['<a href="/">/</a>'];
+    Array.prototype.forEach.call(pathParts, function(part, index) {
+      pathContents.push('<a href="/' + joinUntil(pathParts, index, '/') + '">' + decodeURI(part) + '</a>');
+    });
+
+    path.innerHTML = pathContents.join('&rsaquo;');
+  </script>

@@ -1,0 +1,85 @@
+{
+    "required_plugins": {
+        "azure": {
+            "version": ">= 1.0.0",
+            "source": "github.com/hashicorp/azure"
+        }
+    },
+    "variables": {
+        "subscription_id": "{{env `ARM_SUBSCRIPTION_ID`}}",
+        "client_id": "{{env `ARM_CLIENT_ID`}}",
+        "client_secret": "{{env `ARM_CLIENT_SECRET`}}",
+
+        "resource_group": "",
+        "location": "",
+        
+        "image_publisher": "",
+        "image_offer": "",
+        "image_sku": "",
+        "image_version": "",
+        "vm_size": "Standard_B2s",
+
+        "image_name": "",
+        "image_snapshot_name": "",
+        "build_dir": ""
+    },
+    "builders": [
+        {
+            "type": "azure-arm",
+            "subscription_id": "{{user `subscription_id`}}",
+            "client_id": "{{user `client_id`}}",
+            "client_secret": "{{user `client_secret`}}",
+
+            "os_type": "Linux",
+            "image_publisher": "{{user `image_publisher`}}",
+            "image_offer": "{{user `image_offer`}}",
+            "image_sku": "{{user `image_sku`}}",
+            "image_version": "{{user `image_version`}}",
+
+            "managed_image_resource_group_name": "{{user `resource_group`}}",
+            "managed_image_name": "{{user `image_name`}}",
+            "managed_image_os_disk_snapshot_name": "{{user `image_snapshot_name`}}",
+
+            "location": "{{user `location`}}",
+            "vm_size": "{{user `vm_size`}}",
+            "ssh_username": "ubuntu",
+
+            "os_disk_size_gb": 30
+        }
+    ],
+    "provisioners": [
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/.download",
+            "destination": "/tmp/download"
+        },
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/scripts/config",
+            "destination": "/tmp/inceptor-scripts"
+        },
+        {
+            "type": "file",
+            "source": "{{user `build_dir`}}/www",
+            "destination": "/tmp/www-static-home"
+        },
+        {
+            "type": "shell",
+            "expect_disconnect": "true",
+            "inline_shebang": "/bin/bash -x",
+            "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+            "inline": [ 
+                "chmod +x /tmp/inceptor-scripts/*",
+                "/tmp/inceptor-scripts/install_packages" 
+            ]
+        },
+        {
+            "type": "shell",
+            "inline_shebang": "/bin/sh -x",
+            "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+            "inline": [
+                "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,189 @@
+name: Build prod Bastion Images
+concurrency: prod
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+    - 'image/build/**'
+    - 'image/packer/**'
+    - 'image/scripts/**'
+    - 'image/www/**'
+
+jobs:
+  create-release-tag:
+    runs-on: ubuntu-latest
+    outputs: 
+      version: ${{steps.release-tag.outputs.version}}
+
+    defaults:
+      run:
+        shell: bash
+    
+    env:
+      VERSION: '0.1'
+    
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # Create and tag release
+    - name: Create release tag
+      id: release-tag
+      run: |
+        git config user.email "$(git log -1 --pretty=format:'%an')"
+        git config user.name "$(git log -1 --pretty=format:'%ae')"
+        git fetch --tags origin
+
+        set +e
+        last_tag=$(git for-each-ref \
+          --sort=-creatordate \
+          --format '%(refname)' refs/tags \
+          | grep "refs/tags/${VERSION}" \
+          | head -1)
+        set -e
+
+        build_number=$(basename "$last_tag" | cut -d '.' -f3)
+        [[ -n $build_number ]] || build_number=-1
+        release_tag=${VERSION}.$((build_number+1))
+        last_commit_msg=$(git log -1 --pretty=%B)
+
+        echo "Creating release tag ${release_tag}..."
+        git tag -a ${release_tag} -m "$last_commit_msg"
+        git push --follow-tags
+
+        echo "version=${release_tag}" >> $GITHUB_OUTPUT
+
+  build-aws-image:
+    needs: create-release-tag
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    # Setup environment for build
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      VERSION: ${{ needs.create-release-tag.outputs.version }}
+      IS_DEV_BUILD: no
+
+    steps:
+      
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ needs.create-release-tag.outputs.version }}
+
+    - name: Run build
+      run: |
+        build/build-aws-image.sh us-east-1 $VERSION
+
+    - name: Publish image
+      run: |
+        build/publish-aws-image.sh us-east-1 $VERSION
+
+  build-azure-image:
+    needs: create-release-tag
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    # Setup environment for build
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      VERSION: ${{ needs.create-release-tag.outputs.version }}
+      IS_DEV_BUILD: no
+
+    steps:
+      
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ needs.create-release-tag.outputs.version }}
+
+    - name: Run build
+      run: |
+        build/build-azure-image.sh $VERSION eastus
+
+    - name: Publish image
+      run: |
+        build/publish-azure-image.sh eastus $VERSION all
+
+  build-google-image:
+    needs: create-release-tag
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    # Setup environment for build
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      GOOGLE_CREDENTIALS: ${{ github.workspace }}/image/.gcp-service-account.json
+      GOOGLE_ACCOUNT: releng@appbricks-external.iam.gserviceaccount.com
+      GOOGLE_PROJECT: appbricks-external
+      GOOGLE_REGION: us-east1
+      GOOGLE_ZONE: us-east1-d
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      VERSION: ${{ needs.create-release-tag.outputs.version }}
+      IS_DEV_BUILD: no
+
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ needs.create-release-tag.outputs.version }}
+
+    - name: Run build
+      run: |
+        echo '${{ secrets.GOOGLE_CREDENTIALS }}' > ${{ github.workspace }}/image/.gcp-service-account.json
+        build/build-google-image.sh $VERSION
+
+    - name: Publish image
+      run: |
+        echo '${{ secrets.GOOGLE_CREDENTIALS }}' > ${{ github.workspace }}/image/.gcp-service-account.json
+        build/publish-google-image.sh $VERSION
+
+  trigger-dependent-builds:
+    needs: 
+    - build-aws-image
+    - build-azure-image
+    - build-google-image
+
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+
+    - name: Trigger vpn-server build
+      uses: benc-uk/workflow-dispatch@v1
+      with:
+        repo: appbricks/vpn-server
+        ref: dev
+        workflow: MyCS SpaceNode Cookbook and SDK (appbricks/spacenode-cookbook:latest) CLI
+        token: ${{ secrets.GH_TOKEN }}

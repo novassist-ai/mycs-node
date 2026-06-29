@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.wireguard_installed ]] || exit 0
+
+if [[ -z "$config_vpn_wireguard_itf_name" || -z "$config_vpn_wireguard_listen_port" ]]; then
+  echo "Skipping VPN wireguard server setup as no configuration port found."
+  exit 0
+fi
+
+wg_itf=$config_vpn_wireguard_itf_name
+
+WIREGUARD_DATA_HOME=/data/wireguard
+WIREGUARD_CONFIG=$WIREGUARD_DATA_HOME/etc
+mkdir -p $WIREGUARD_CONFIG
+
+rm -fr /etc/wireguard
+ln -s $WIREGUARD_CONFIG /etc/wireguard
+
+wireguard_netinfo=$(ipcalc $config_vpn_wireguard_subnet_ip)
+wireguard_network=$(echo "$wireguard_netinfo" | awk '/Network:/{ print $2 }')
+if [[ ! -e $WIREGUARD_CONFIG/private_key ]]; then
+  wireguard_private_key=$(wg genkey | tee $WIREGUARD_CONFIG/private_key)
+else
+  wireguard_private_key=$(cat $WIREGUARD_CONFIG/private_key)
+fi
+wireguard_public_key=$(wg pubkey < $WIREGUARD_CONFIG/private_key)
+
+if [[ -e /usr/local/etc/.powerdns_installed ]]; then
+  client_dns_servers=$config_powerdns_ns_ip
+else
+  client_dns_servers=${config_vpn_dns_servers:-$config_server_dns_resolvers}
+fi
+echo "vpn_server_description=\"$config_vpn_server_description\"" > $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_server_public_address=\"$config_server_host\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_server_local_address=\"$config_vpn_wireguard_subnet_ip\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_server_listen_port=\"$config_vpn_wireguard_listen_port\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_server_public_key=\"$wireguard_public_key\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_client_dns_servers=\"$client_dns_servers\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_vpn_network=\"$config_vpn_subnet\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_restricted_network=\"$config_vpn_restricted_subnet\"" >> $WIREGUARD_CONFIG/serverinfo
+echo "wireguard_admin_user=\"$config_server_admin_user\"" >> $WIREGUARD_CONFIG/serverinfo
+
+cat << ---EOF > /etc/wireguard/${wg_itf}.conf
+[Interface]
+Address = $config_vpn_wireguard_subnet_ip
+ListenPort = $config_vpn_wireguard_listen_port
+PrivateKey = $wireguard_private_key
+---EOF
+
+chmod 0600 /etc/wireguard/${wg_itf}.conf
+systemctl start wg-quick@${wg_itf}
+systemctl enable wg-quick@${wg_itf}
+
+# Client config for peering bastion instances
+cat << ---EOF > /data/users/home/${config_server_admin_user}/wireguard_peer_config
+# $config_server_fqdn
+[Peer]
+PublicKey = $wireguard_public_key
+Endpoint = ${config_vpn_wireguard_host_ip}:${config_vpn_wireguard_listen_port}
+AllowedIPs = $wireguard_network
+PersistentKeepalive = 25
+---EOF
+chown ${config_server_admin_user}:${config_server_admin_user} /data/users/home/${config_server_admin_user}/wireguard_peer_config
+
+mv $SCRIPT_HOME/set-wireguard-peer /usr/local/bin/set-wireguard-peer
+chmod +x /usr/local/bin/set-wireguard-peer
+
+if [[ "$config_vpn_type" == "wireguard" && "$config_vpn_idle_action" == "shutdown" ]]; then
+
+  # Setup CRON job to shutdown when no clients connected
+  cat << ---EOF >> /etc/cron.d/vpn_inactivity_action
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+* * * * *   root    test -x /usr/local/lib/cloud-inceptor/idle_shutdown_wireguard && /usr/local/lib/cloud-inceptor/idle_shutdown_wireguard
+---EOF
+fi
+
+if [[ "$config_vpn_type" == "wireguard" ]]; then
+  network_apply_roadwarrior_vpn_nft
+fi
+
+set +ex
+touch /usr/local/etc/.wireguard_installed

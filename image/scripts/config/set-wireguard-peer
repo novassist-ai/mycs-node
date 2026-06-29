@@ -1,0 +1,59 @@
+#!/bin/bash
+
+set -eou pipefail
+
+WIREGUARD_DATA_HOME=/data/wireguard
+WIREGUARD_CONFIG=$WIREGUARD_DATA_HOME/etc
+
+# Action add/remove configuration
+action=$1
+# Peer host
+peer_hostname=$2
+
+systemctl stop wg-quick@wg0
+if [[ $action == add ]]; then
+
+  # User/password to use to download public key from peer
+  peer_pk_download_user=$3
+  peer_pk_download_password=$4
+  nat_via_peer=${5:-}
+
+  peer_config=$(curl -s -f \
+    -u "${peer_pk_download_user}:${peer_pk_download_password}" \
+    -kL https://${peer_hostname}/~${peer_pk_download_user}/wireguard_peer_config)
+
+  cat << ---EOF >> /etc/wireguard/wg0.conf
+
+$peer_config
+---EOF
+
+  if [[ $nat_via_peer == nat ]]; then
+    public_key=$(echo "$peer_config" | awk '/PublicKey/{ print $3 }')
+    sed -i "s|^#PostUp = wg set wg0 peer .*$|PostUp = wg set wg0 peer \"$public_key\" allowed-ips 0.0.0.0/0|" \
+      /etc/wireguard/wg0.conf
+
+    sed -i "s|^#Table = \(.*\)|Table = \1|" \
+      /etc/wireguard/wg0.conf
+    sed -i "s|^#PostUp = \(.*\)|PostUp = \1|" \
+      /etc/wireguard/wg0.conf
+    sed -i "s|^#PostDown = \(.*\)|PostDown = \1|" \
+      /etc/wireguard/wg0.conf
+  fi
+
+elif [[ $action == delete ]]; then
+
+  public_key=$(grep -A 2 "# $peer_hostname" /etc/wireguard/wg0.conf | awk '/PublicKey/{ print $3 }')
+  sed -i "s|PostUp = wg set wg0 peer \"$public_key\" allowed-ips 0\.0\.0\.0/0|#PostUp = wg set wg0 peer <peer_public_key> allowed-ips 0.0.0.0/0|" \
+    /etc/wireguard/wg0.conf
+
+  sed -i "s|^Table = \(.*\)|#Table = \1|" \
+    /etc/wireguard/wg0.conf
+  sed -i "s|^PostUp = \(.*\)|#PostUp = \1|" \
+    /etc/wireguard/wg0.conf
+  sed -i "s|^PostDown = \(.*\)|#PostDown = \1|" \
+    /etc/wireguard/wg0.conf
+
+  sed -i -e "/# ${peer_hostname}/,+5 d" /etc/wireguard/wg0.conf
+  sed -i -e :a -e '/^\n*$/{$d;N;};/\n$/ba' /etc/wireguard/wg0.conf
+fi
+systemctl start wg-quick@wg0

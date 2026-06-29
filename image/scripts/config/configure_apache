@@ -1,0 +1,224 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+# We want apache webserver to be reconfigured on each reboot
+#
+# [[ ! -e /usr/local/etc/.apache_installed ]] || exit 0
+
+#
+# Configure server certificates
+#
+
+if [[ $config_server_certify_bastion == "yes" ]]; then
+
+  if [[ -e /data/letsencrypt/etc/${config_server_fqdn} \
+    && ! -e /etc/letsencrypt/${config_server_fqdn} ]]; then
+    # Restore Letsencrypt certs
+    cp -r /data/letsencrypt/etc/* /etc/letsencrypt/
+  fi
+
+  # Letsencrypt certs expire after 90 days
+  expired_cert_file="/data/letsencrypt/etc/live/${config_server_fqdn}/cert.pem"
+  if [[ -e "$expired_cert_file" ]]; then
+    set +e
+    expired_cert_file=$(find "$expired_cert_file" -mtime +90)
+    set -e
+  fi
+  
+  if [[ -n "$expired_cert_file" ]]; then
+    certbot certonly \
+      --non-interactive \
+      --agree-tos \
+      --standalone \
+      --preferred-challenges http \
+      --email ${config_server_admin_user}@${config_server_fqdn} \
+      -d $config_server_fqdn
+
+    # Backup letsencrypt
+    mkdir -p /data/letsencrypt
+    cp -r /etc/letsencrypt /data/letsencrypt/etc
+  else
+    # Restore letsencrypt
+    cp -r /data/letsencrypt/etc/* /etc/letsencrypt/
+  fi
+
+  ln -f -s \
+    /etc/letsencrypt/live/${config_server_fqdn}/cert.pem \
+    /etc/ssl/certs/bastion_cert.pem
+  ln -f -s \
+    /etc/letsencrypt/live/${config_server_fqdn}/privkey.pem \
+    /etc/ssl/private/bastion_key.pem
+  ln -f -s \
+    /etc/letsencrypt/live/${config_server_fqdn}/chain.pem \
+    /etc/ssl/certs/bastion_chain.pem
+  ln -f -s \
+    /etc/letsencrypt/live/${config_server_fqdn}/fullchain.pem \
+    /etc/ssl/certs/bastion_fullchain.pem
+
+# Enable once AppArmor is configured on the bastion hosts
+#
+#   cat << ---EOF > /etc/apparmor.d/local/usr.lib.ipsec.charon
+# /etc/letsencrypt/archive/${config_server_fqdn}/* r,
+# ---EOF
+
+#   aa-status --enabled && invoke-rc.d apparmor reload
+
+elif [[ -e /etc/ssl/certs/bastion_ca.pem ]]; then
+  cp /etc/ssl/certs/bastion_ca.pem /etc/ssl/certs/bastion_chain.pem
+else
+  echo "ERROR! Unable to retrieve server certificates"
+fi
+
+#
+# Configure Apache2 Web Server
+#
+
+APACHE_USER_CONFIG=/data/users/etc/apache2
+mkdir -p $APACHE_USER_CONFIG
+
+web_server_http_port=${config_webserver_http_port:-80}
+web_server_https_port=${config_webserver_https_port:-443}
+web_server_static_content_port=${config_webserver_static_content_port:-80}
+
+cat << ---EOF > /etc/apache2/ports.conf
+Listen ${config_server_dmz_itf_ip}:${web_server_http_port}
+
+<IfModule ssl_module>
+  Listen ${config_server_dmz_itf_ip}:${web_server_https_port}
+</IfModule>
+
+<IfModule mod_gnutls.c>
+  Listen ${config_server_dmz_itf_ip}:${web_server_https_port}
+</IfModule>
+
+# static content
+Listen 127.0.0.1:${web_server_static_content_port}
+---EOF
+
+# Increase keep alive timeout to accomodate long polling
+sed -i 's|^KeepAliveTimeout .*$|KeepAliveTimeout 60|' /etc/apache2/apache2.conf
+
+# Use the fully qualified name
+# of the host instead of host ip.
+[[ $config_server_use_fqdn == "true" ]] && \
+  config_server_host=$config_server_fqdn
+
+if [[ $web_server_https_port == 443 ]]; then
+  redirect_https=https://$config_server_host/
+else
+  redirect_https=https://$config_server_host:$web_server_https_port/
+fi
+
+cat << ---EOF > /etc/apache2/sites-available/bastion-web.conf
+<VirtualHost ${config_server_dmz_itf_ip}:${web_server_http_port}>
+ServerName $config_server_host
+Redirect permanent / $redirect_https
+</VirtualHost>
+
+<VirtualHost ${config_server_dmz_itf_ip}:${web_server_https_port}>
+ServerName $config_server_host
+
+ErrorDocument 500 /static/error50x.html
+ErrorDocument 501 /static/error50x.html
+ErrorDocument 502 /static/error50x.html
+ErrorDocument 503 /static/error50x.html
+ErrorDocument 504 /static/error50x.html
+ErrorDocument 505 /static/error50x.html
+
+ErrorDocument 400 /static/error40x.html
+ErrorDocument 401 /static/error40x.html
+ErrorDocument 402 /static/error40x.html
+ErrorDocument 403 /static/error40x.html
+ErrorDocument 404 /static/error40x.html
+ErrorDocument 405 /static/error40x.html
+ErrorDocument 406 /static/error40x.html
+
+SSLEngine on
+SSLCertificateFile /etc/ssl/certs/bastion_cert.pem
+SSLCertificateKeyFile /etc/ssl/private/bastion_key.pem
+SSLCertificateChainFile /etc/ssl/certs/bastion_chain.pem
+
+RedirectMatch "^/$" "${redirect_https}static/"
+RedirectMatch "^/static$" "${redirect_https}static/"
+ProxyPassMatch "^/$" !
+ProxyPassMatch "^/static$" !
+
+ProxyPass "/static/" "http://127.0.0.1:${web_server_static_content_port}/"
+ProxyPassReverse "/static/" "http://127.0.0.1:${web_server_static_content_port}/"
+
+ProxyPass "/mycs/" "http://127.0.0.1:${config_services_node_api_port}/mycs/"
+ProxyPassReverse "/mycs/" "http://127.0.0.1:${config_services_node_api_port}/mycs/"
+
+ProxyPass "/ts2021" "http://127.0.0.1:${config_services_ts_control_service_port}/ts2021" upgrade=ANY
+ProxyPass "/derp" "http://127.0.0.1:${config_services_ts_control_service_port}/derp" upgrade=ANY
+
+ProxyPass "/" "http://127.0.0.1:${config_services_ts_control_service_port}/"
+ProxyPassReverse "/" "http://127.0.0.1:${config_services_ts_control_service_port}/"
+</VirtualHost>
+
+<VirtualHost 127.0.0.1:8080>
+DocumentRoot /var/www/html
+
+ErrorDocument 500 /error50x.html
+ErrorDocument 501 /error50x.html
+ErrorDocument 502 /error50x.html
+ErrorDocument 503 /error50x.html
+ErrorDocument 504 /error50x.html
+ErrorDocument 505 /error50x.html
+
+ErrorDocument 400 /error40x.html
+ErrorDocument 401 /error40x.html
+ErrorDocument 402 /error40x.html
+ErrorDocument 403 /error40x.html
+ErrorDocument 404 /error40x.html
+ErrorDocument 405 /error40x.html
+ErrorDocument 406 /error40x.html
+---EOF
+
+# enable user download links only for bastion nodes without wireguard
+if [[ $config_vpn_type != "wireguard" ]]; then
+  cat << ---EOF >> /etc/apache2/sites-available/bastion-web.conf
+
+<IfModule mod_authnz_external.c>
+AddExternalAuth pwauth /usr/sbin/pwauth
+SetExternalAuthMethod pwauth pipe
+</IfModule>
+
+# Bastion Users
+UserDir "/data/users/home/*"
+IncludeOptional "/data/users/etc/apache2/*.conf"
+---EOF
+fi
+
+cat << ---EOF >> /etc/apache2/sites-available/bastion-web.conf
+
+</VirtualHost>
+---EOF
+
+pushd /etc/apache2/mods-enabled
+[[ -e rewrite.load ]] || ln -s ../mods-available/rewrite.load rewrite.load
+[[ -e userdir.load ]] || ln -s ../mods-available/userdir.load userdir.load
+[[ -e authnz_external.load ]] || ln -s ../mods-available/authnz_external.load authnz_external.load
+[[ -e socache_shmcb.load ]] || ln -s ../mods-available//socache_shmcb.load socache_shmcb.load
+[[ -e proxy.load ]] || ln -s ../mods-available/proxy.load proxy.load
+[[ -e proxy_http.load ]] || ln -s ../mods-available/proxy_http.load proxy_http.load
+[[ -e proxy_http2.load ]] || ln -s ../mods-available/proxy_http2.load proxy_http2.load
+[[ -e proxy_wstunnel.load ]] || ln -s ../mods-available/proxy_wstunnel.load proxy_wstunnel.load
+[[ -e ssl.load ]] || ln -s ../mods-available/ssl.load ssl.load
+[[ -e ssl.conf ]] || ln -s ../mods-available/ssl.conf ssl.conf
+popd
+
+pushd /etc/apache2/sites-enabled
+rm -f *
+ln -s ../sites-available/bastion-web.conf bastion-web.conf
+popd
+
+systemctl enable apache2
+systemctl restart apache2
+
+set +ex
+touch /usr/local/etc/.apache_installed

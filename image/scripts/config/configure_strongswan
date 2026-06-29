@@ -1,0 +1,296 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+function get_strongswan_service_unit {
+  echo strongswan.service
+}
+
+function strongswan_install_server_certs {
+  strongswan_ensure_data_dirs
+  install -m 644 /etc/ssl/certs/bastion_ca.pem \
+    "$STRONGSWAN_DATA_HOME/x509ca/bastion_ca.pem"
+  install -m 644 /etc/ssl/certs/bastion_chain.pem \
+    "$STRONGSWAN_DATA_HOME/x509ca/bastion_chain.pem"
+  install -m 644 /etc/ssl/certs/bastion_cert.pem \
+    "$STRONGSWAN_DATA_HOME/x509/bastion_cert.pem"
+  install -m 600 /etc/ssl/private/bastion_key.pem \
+    "$STRONGSWAN_DATA_HOME/private/bastion_key.pem"
+}
+
+function strongswan_remove_legacy_config {
+  rm -rf /etc/ipsec.d /etc/ipsec.conf /etc/ipsec.secrets
+}
+
+function strongswan_refresh_conf_includes {
+  local conf=$1
+
+  [[ -f $conf ]] || return 0
+
+  sed -i '/^include conf\.d\//d' "$conf"
+  local f
+  shopt -s nullglob
+  for f in "$STRONGSWAN_DATA_HOME/etc/conf.d"/*.conf; do
+    echo "include conf.d/$(basename "$f")" >> "$conf"
+  done
+  shopt -u nullglob
+}
+
+function strongswan_install_systemd_dropin {
+  mkdir -p /etc/systemd/system/strongswan.service.d
+  cat << '---EOF' > /etc/systemd/system/strongswan.service.d/bastion.conf
+[Service]
+# Keep stock ExecStartPost so swanctl loads connections after every charon start
+# (required after idle-shutdown reboot; configure_strongswan also loads once at install).
+ExecStartPost=/usr/sbin/swanctl --load-all --noprompt
+TimeoutStartSec=180
+---EOF
+  systemctl daemon-reload
+}
+
+function strongswan_sync_runtime {
+  strongswan_remove_legacy_config
+  rm -f /etc/strongswan.d/charon/bastion-vpn.conf
+  strongswan_refresh_conf_includes "$STRONGSWAN_DATA_HOME/etc/swanctl.conf"
+  mkdir -p /etc/swanctl/{x509ca,x509,private,pubkey,conf.d}
+  rsync -a "$STRONGSWAN_DATA_HOME/x509ca/" /etc/swanctl/x509ca/
+  rsync -a "$STRONGSWAN_DATA_HOME/x509/" /etc/swanctl/x509/
+  rsync -a "$STRONGSWAN_DATA_HOME/private/" /etc/swanctl/private/
+  install -m 600 "$STRONGSWAN_DATA_HOME/etc/swanctl.conf" /etc/swanctl/swanctl.conf
+  if [[ -d "$STRONGSWAN_DATA_HOME/etc/conf.d" ]]; then
+    rsync -a "$STRONGSWAN_DATA_HOME/etc/conf.d/" /etc/swanctl/conf.d/
+  fi
+  strongswan_install_systemd_dropin
+}
+
+function strongswan_ensure_charon_ready {
+  local i
+
+  for i in $(seq 1 30); do
+    [[ -S /var/run/charon.vici ]] && return 0
+    sleep 1
+  done
+
+  echo "ERROR! charon VICI socket not available at /var/run/charon.vici" >&2
+  return 1
+}
+
+function strongswan_start_service {
+  local strongswan_service
+  strongswan_service=$(get_strongswan_service_unit)
+  systemctl enable "$strongswan_service"
+  systemctl reset-failed "$strongswan_service" 2>/dev/null || true
+  systemctl stop "$strongswan_service" 2>/dev/null || true
+  if ! systemctl start "$strongswan_service"; then
+    echo "ERROR! $strongswan_service failed to start:" >&2
+    journalctl -u "$strongswan_service" -n 40 --no-pager >&2 || true
+    return 1
+  fi
+  strongswan_ensure_charon_ready
+}
+
+function strongswan_load_config {
+  strongswan_ensure_charon_ready || return 1
+  if ! swanctl --load-all --noprompt; then
+    echo "ERROR! swanctl --load-all failed:" >&2
+    swanctl --load-conns --noprompt 2>&1 >&2 || true
+    return 1
+  fi
+}
+
+function vpn_pkcs12_openssl_mode {
+  if [[ "${config_vpn_ipsec_support_legacy_clients:-true}" == "true" ]]; then
+    echo legacy
+  else
+    echo modern
+  fi
+}
+
+function write_roadwarrior_swanctl_conf {
+
+  [[ $config_server_use_fqdn == "true" ]] && \
+    config_server_host=$config_server_fqdn
+
+  server_cn=$(ssl_cert_subject_cn /etc/ssl/certs/bastion_cert.pem)
+  [[ -n $server_cn ]] || server_cn=$config_vpn_vpn_cert_cn
+
+  if [[ -e /usr/local/etc/.powerdns_installed ]]; then
+    dns_servers=$config_powerdns_ns_ip
+  else
+    dns_servers=${config_vpn_dns_servers:-$config_server_dns_resolvers}
+  fi
+
+  mkdir -p $STRONGSWAN_CONFIG
+
+  pkcs12_openssl_mode=$(vpn_pkcs12_openssl_mode)
+
+  cat << ---EOF > $STRONGSWAN_CONFIG/serverinfo
+export vpn_server="$config_server_host"
+export vpn_server_description="$config_vpn_server_description"
+export vpn_server_cert_country="$config_vpn_vpn_cert_country"
+export vpn_server_cert_org="$config_vpn_vpn_cert_org"
+export vpn_pkcs12_openssl="${pkcs12_openssl_mode}"
+---EOF
+
+  cat << ---EOF > $STRONGSWAN_CONFIG/swanctl.conf
+# bastion-swanctl-format: v4
+connections {
+  ikev2-eap-tls {
+    version = 2
+    local_addrs = ${config_server_dmz_itf_ip}
+    remote_addrs = %any
+    send_certreq = yes
+    send_cert = always
+    encap = yes
+    fragmentation = yes
+    unique = never
+    rekey_time = 0s
+    reauth_time = 0s
+    pools = roadwarrior
+    dpd_delay = 300s
+
+    proposals = aes256gcm16-prfsha256-ecp521,aes256gcm16-prfsha384-ecp521,aes256gcm16-prfsha384-ecp384,aes128gcm16-prfsha256-ecp256
+
+    local {
+      auth = pubkey
+      certs = bastion_cert.pem
+      id = ${server_cn}
+    }
+    remote {
+      auth = pubkey
+      cacerts = bastion_ca.pem
+    }
+    children {
+      net {
+        local_ts = 0.0.0.0/0, ::/0
+        esp_proposals = aes256gcm16-ecp521,aes256gcm16-ecp384,aes128gcm16-ecp256
+        rekey_time = 0s
+        life_time = 24h
+        dpd_action = clear
+        start_action = none
+      }
+    }
+  }
+}
+
+pools {
+  roadwarrior {
+    addrs = ${config_vpn_subnet}
+    dns = ${dns_servers}
+  }
+}
+---EOF
+
+  strongswan_refresh_conf_includes $STRONGSWAN_CONFIG/swanctl.conf
+}
+
+function apply_strongswan_runtime {
+
+  if [[ ! -e /etc/ssl/certs/bastion_ca.pem ]]; then
+    echo "ERROR! Unable to find the server certificates."
+    exit 1
+  fi
+
+  strongswan_install_server_certs
+
+  if [[ -e $SCRIPT_HOME/create_ipsecvpn_user ]]; then
+    ln -sf $SCRIPT_HOME/create_ipsecvpn_user /usr/local/bin/create_vpn_user
+  fi
+  if [[ -e $SCRIPT_HOME/delete_ipsecvpn_user ]]; then
+    ln -sf $SCRIPT_HOME/delete_ipsecvpn_user /usr/local/bin/delete_vpn_user
+  fi
+  if [[ -e $SCRIPT_HOME/idle_shutdown_strongswan ]]; then
+    idle_shutdown_src=$(readlink -f "$SCRIPT_HOME/idle_shutdown_strongswan")
+    idle_shutdown_dest=/usr/local/lib/cloud-inceptor/idle_shutdown_strongswan
+    if [[ "$idle_shutdown_src" != "$(readlink -f "$idle_shutdown_dest" 2>/dev/null || true)" ]]; then
+      install -m 755 "$idle_shutdown_src" "$idle_shutdown_dest"
+    fi
+  fi
+
+  if [[ "$(vpn_pkcs12_openssl_mode)" == legacy ]]; then
+    if ! docker image inspect shamelesscookie/openssl:1.1.1s &>/dev/null; then
+      docker load < /usr/local/lib/cloud-inceptor/openssl_1.1.1s.tgz
+    fi
+  fi
+
+  strongswan_sync_runtime
+}
+
+function configure_strongswan_main {
+
+  [[ ! -e /usr/local/etc/.strongswan_installed ]] || exit 0
+
+  if [[ "${config_vpn_type:-}" != "ipsec" ]]; then
+    echo "Skipping VPN setup as no VPN configuration found."
+    exit 0
+  fi
+
+  STRONGSWAN_CONFIG=$STRONGSWAN_DATA_HOME/etc
+
+  swanctl_config_ok=false
+  if [[ -e $STRONGSWAN_CONFIG/swanctl.conf ]] \
+    && grep -q 'bastion-swanctl-format: v4' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'unique = never' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'send_cert = always' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'dpd_delay = 300s' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q "local_addrs = ${config_server_dmz_itf_ip}" $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'remote_addrs = %any' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'aes256gcm16-prfsha256-ecp521' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'auth = pubkey' $STRONGSWAN_CONFIG/swanctl.conf \
+    && ! grep -q 'auth = eap-tls' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -qE '^[[:space:]]+net \{' $STRONGSWAN_CONFIG/swanctl.conf \
+    && grep -q 'ikev2-eap-tls' $STRONGSWAN_CONFIG/swanctl.conf \
+    && ! grep -q 'include conf\.d/\*\.conf' $STRONGSWAN_CONFIG/swanctl.conf; then
+    expected_cn=$(ssl_cert_subject_cn /etc/ssl/certs/bastion_cert.pem)
+    [[ -n $expected_cn ]] || expected_cn=$config_vpn_vpn_cert_cn
+    grep -q "id = ${expected_cn}" $STRONGSWAN_CONFIG/swanctl.conf \
+      && swanctl_config_ok=true
+  fi
+
+  [[ $swanctl_config_ok == true ]] || write_roadwarrior_swanctl_conf
+
+  apply_strongswan_runtime
+
+  strongswan_start_service
+  strongswan_load_config
+
+  if [[ "$config_vpn_idle_action" == "shutdown" ]]; then
+
+    sed -i "s/|| echo 10/|| echo ${config_mycs_idle_shutdown_time}/" \
+      /usr/local/lib/cloud-inceptor/idle_shutdown_strongswan
+    sed -i "s/  counter=10/  counter=${config_mycs_idle_shutdown_time}/" \
+      /usr/local/lib/cloud-inceptor/idle_shutdown_strongswan
+
+    cat << ---EOF >> /etc/cron.d/vpn_inactivity_action
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+* * * * *   root    test -x /usr/local/lib/cloud-inceptor/idle_shutdown_strongswan && /usr/local/lib/cloud-inceptor/idle_shutdown_strongswan
+---EOF
+  fi
+
+  pkcs12_openssl_mode=$(vpn_pkcs12_openssl_mode)
+
+  create_vpn_user \
+    "$config_server_admin_user" \
+    "$config_server_admin_passwd" \
+    "$pkcs12_openssl_mode"
+
+  for u in $(echo $config_vpn_users | sed "s/,/ /g"); do
+    user=$(echo $u | awk -F'|' '{print $1}')
+    passwd=$(echo $u | awk -F'|' '{print $2}')
+
+    create_vpn_user "$user" "$passwd" "$pkcs12_openssl_mode"
+  done
+
+  network_apply_roadwarrior_vpn_nft
+
+  set +ex
+  touch /usr/local/etc/.strongswan_installed
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  configure_strongswan_main
+fi

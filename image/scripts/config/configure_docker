@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ -e /usr/local/etc/.docker_installed ]] && exit 0
+
+function docker_install_user_forward_hooks {
+    local apply_script=/usr/local/lib/cloud-inceptor/apply_docker_user_forward
+
+    chmod +x "$apply_script"
+
+    mkdir -p /etc/systemd/system/docker.service.d
+    cat << '---EOF' > /etc/systemd/system/docker.service.d/cloud-inceptor-forward.conf
+[Service]
+ExecStartPost=/usr/local/lib/cloud-inceptor/apply_docker_user_forward
+---EOF
+
+    cat << '---EOF' > /etc/systemd/system/cloud-inceptor-docker-forward.service
+[Unit]
+Description=Allow bastion forwarded traffic through Docker FORWARD chain
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cloud-inceptor/apply_docker_user_forward
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+    systemctl daemon-reload
+    systemctl enable cloud-inceptor-docker-forward.service
+}
+
+#
+# Configure Docker daemon
+#
+
+systemctl enable docker
+set +e
+
+if [[ -n $config_server_docker_mount_path ]]; then
+
+  echo "Changing docker root path to '${config_server_docker_mount_path}/docker'."
+
+  systemctl stop docker
+
+  mkdir -p /etc/systemd/system/docker.service.d
+  cat << ---EOF > /etc/systemd/system/docker.service.d/docker.root.conf
+[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd --data-root ${config_server_docker_mount_path}/docker
+---EOF
+
+  systemctl daemon-reload
+fi
+
+cat << ---EOF > /etc/docker/daemon.json
+{
+  "default-address-pools": [
+    {
+      "base": "192.168.255.0/24",
+      "size": 28
+    }
+  ],
+  "dns": [
+    "8.8.8.8",
+    "8.8.4.4"
+  ]
+}
+---EOF
+
+docker_install_user_forward_hooks
+
+set -e
+systemctl restart docker
+
+# ExecStartPost on docker.service applies DOCKER-USER rules; run once more
+# in case this host already had docker running during daemon-reload.
+/usr/local/lib/cloud-inceptor/apply_docker_user_forward
+
+set +ex
+touch /usr/local/etc/.docker_installed

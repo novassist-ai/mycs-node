@@ -1,0 +1,43 @@
+#!/bin/bash
+
+#
+# DEPRECATED - wireguard connections are now set up via the mycs-node service
+#
+
+set -e
+
+if [[ -z "$1" ]]; then
+  echo -e "\nUsage: delete_vpn_user user\n"
+  exit 1
+fi
+
+if [[ `whoami` != "root" ]]; then 
+  echo -e "\nThis script needs to be run as root.\n"
+  exit 1
+fi
+
+user=$1
+userdel $user > /dev/null 2>&1
+rm -fr /data/home/$user
+rm -fr /etc/wireguard/users/$user
+
+if [[ -e /etc/apache2 ]]; then
+  APACHE_USER_CONFIG=/data/users/etc/apache2
+  rm -f ${APACHE_USER_CONFIG}/$user.conf
+  systemctl restart apache2
+fi
+
+sed "/^AllowUsers $user$/d" /etc/ssh/sshd_config
+service sshd restart
+
+sed "/# ${user}/,+4 d" /etc/wireguard/wg0.conf
+wg setconf wg0 <(wg-quick strip wg0)
+
+# Backup all system user files
+cp /etc/passwd /data/users/etc
+cp /etc/shadow /data/users/etc
+cp /etc/group /data/users/etc
+cp /etc/gshadow /data/users/etc
+cp /etc/ssh/sshd_config /data/users/etc/ssh
+
+set +e

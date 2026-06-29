@@ -1,0 +1,32 @@
+#!/bin/bash -e
+#
+# rc.local
+#
+# This script is executed at the end of each multiuser runlevel.
+# Make sure that the script will "exit 0" on success or any other
+# value on error.
+#
+# In order to enable or disable this script just change the execution
+# bits.
+#
+# By default this script does nothing.
+
+# Ensure custom nftables rules are loaded
+[[ ! -e /data/network/etc/nftables.conf ]] \
+  || nft -f /data/network/etc/nftables.conf
+
+# Create default location for mycs
+# process resources and set appropriate
+# permissions as mycs-node does not 
+# run as root.
+mkdir -p /var/run/mycs
+chown -R mycs:root /var/run/mycs
+
+# Reconfigure Apache if installed
+if [[ -e /usr/local/etc/.apache_installed ]]; then
+  /usr/local/lib/cloud-inceptor/configure_apache 2>&1 \
+    | tee -a /var/log/configure_apache.log \
+    || echo "ERROR! Script configure_apache exited with error: $?"
+fi
+
+exit 0
