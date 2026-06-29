@@ -43,6 +43,8 @@ module "bootstrap" {
 
   configure_admin_network = var.configure_admin_network
 
+  admin_vlan_id = 0
+
   # Public DNS: delegated child zone in AWS Route53 (parent: ovh.appbricks.io)
   vpc_dns_zone    = local.openstack_vpc_dns_zone
   attach_dns_zone = var.attach_dns_zone
