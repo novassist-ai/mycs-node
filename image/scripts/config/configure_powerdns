@@ -62,7 +62,7 @@ cat >docker-compose.yml <<EOF
 services:
   pihole:
     container_name: pihole
-    image: appbricks/pihole:latest
+    image: mycs/pihole:latest
     ports:
       - '127.0.0.1:5301:53/tcp'
       - '127.0.0.1:5301:53/udp'

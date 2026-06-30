@@ -1,6 +1,6 @@
 # Bastion Automation Appliance
 
-Templates and build tooling for a secured bastion appliance used to automate cloud deployments. Images are built with [Packer](https://www.packer.io/) and configured at first boot by bootstrap scripts baked into the image. Terraform modules in [`cloud-inceptor`](https://github.com/appbricks/cloud-inceptor) deploy instances from these images and supply runtime configuration via cloud-init.
+Templates and build tooling for a secured bastion appliance used to automate cloud deployments. Images are built with [Packer](https://www.packer.io/) and configured at first boot by bootstrap scripts baked into the image. Terraform modules in [`cloud-inceptor`](https://github.com/novassist-ai/mycs-node.git/cloud) deploy instances from these images and supply runtime configuration via cloud-init.
 
 The appliance provides secure VPC access (OpenVPN, WireGuard, or IPsec), optional HTTP proxying, internal DNS, SMTP relay, Docker workloads, optional site-to-site VPN gateway peering, and the MyCloudSpace node control plane (Tailscale/Headscale mesh, API, and automation hooks).
 
@@ -240,17 +240,6 @@ Full list and execution order: [docs/runtime-bootstrap-design.md](docs/runtime-b
 Detailed build troubleshooting: [docs/build-design.md](docs/build-design.md#build-troubleshooting).
 
 Runtime/network/VPN troubleshooting: [docs/network-design.md](docs/network-design.md#troubleshooting), [docs/vpn-gateway-design.md](docs/vpn-gateway-design.md#troubleshooting).
-
----
-
-## Related Repositories
-
-| Repository | Role |
-|------------|------|
-| [`cloud-inceptor`](https://github.com/appbricks/cloud-inceptor) | Terraform deployment, `config.yml` generation, peer YAML examples |
-| [`mycs-node`](../service) | Control plane binary bundled into the image (`service/`) |
-| [`headscale`](https://github.com/appbricks/headscale) | Coordination server fork for mesh layer |
-| [`mycloudspace-api`](https://github.com/appbricks/mycloudspace-api) | API whose public key is embedded at build time |
 
 ---
 

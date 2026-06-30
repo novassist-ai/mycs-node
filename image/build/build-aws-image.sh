@@ -39,7 +39,7 @@ fi
 
 # Append version to AMI name
 IMAGE_VERSION=${2:-dev}
-IMAGE_NAME="appbricks-bastion_${IMAGE_VERSION}"
+IMAGE_NAME="mycs-bastion_${IMAGE_VERSION}"
 
 set -euo pipefail
 
@@ -104,12 +104,13 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist/mycs-node}
 if [[ $IS_DEV_BUILD == yes ]]; then
   aws s3 cp s3://mycsdev-${REGION_SHORT_NAME}-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
 elif [[ $MYCS_NODE_VER == latest ]]; then
-  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 else
-  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 fi
 
 # download mycloudspace api public key

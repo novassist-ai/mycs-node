@@ -102,7 +102,7 @@ echo -n "${IMAGE_VERSION}" > "$BUILD_DIR/.download/version"
 
 # Dev S3 artifacts are arm64-only; OVH builds use amd64 from GitHub releases.
 # Use legacy repo until novassist-ai/mycs-node publishes release artifacts.
-MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-appbricks/mycloudspace-node}
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist/mycs-node}
 if [[ $IS_DEV_BUILD == yes ]]; then
   gh release download --clobber \
     --pattern "mycs-node_linux_${OSARCH}.zip" \

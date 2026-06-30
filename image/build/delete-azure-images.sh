@@ -29,7 +29,7 @@ ARM_PUBLISH_STORAGE_ACCOUNT_PREFIX=${ARM_PUBLISH_STORAGE_ACCOUNT_PREFIX:-mycs}
 ARM_PUBLISH_CONTAINER=${ARM_PUBLISH_CONTAINER:-nodeimage}
 
 # Append version to image name
-IMAGE_SNAPSHOT_PREFIX="appbricksbastion"
+IMAGE_SNAPSHOT_PREFIX="mycsbastion"
 if [[ -z $1 ]]; then
   echo -e "ERROR! Snapshot search pattern needs to be provided as the first argument"
   exit 1
@@ -141,7 +141,7 @@ for s in $(echo -e "$snapshot_list"); do
   id=$(echo $s | awk -F'|' '{print $1}')
   snapshot_name=$(echo $s | awk -F'|' '{print $2}')
   version=${snapshot_name%_*} && version=${version#*_} && version=$(echo "$version" | tr '_' '.')
-  publish_vhd_name="appbricks-bastion_${version}.vhd"
+  publish_vhd_name="mycs-bastion_${version}.vhd"
 
   echo -e "\nDeleting image snapshot '$snapshot_name'."
   az snapshot delete --ids $id

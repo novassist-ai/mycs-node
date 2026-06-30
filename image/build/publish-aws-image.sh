@@ -21,7 +21,7 @@ if [[ -z $2 ]]; then
   echo -e "ERROR! Only tagged image builds can be published"
   exit 1
 fi
-IMAGE_NAME="appbricks-bastion_$2"
+IMAGE_NAME="mycs-bastion_$2"
 
 set -euo pipefail
 

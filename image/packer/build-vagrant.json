@@ -54,7 +54,7 @@
     "post-processors": [
         {
             "type": "vagrant-cloud",
-            "box_tag": "appbricks/appbricks-bastion",
+            "box_tag": "mycloudspace/mycs-bastion",
             "version": "{{user `version`}}"
         }
     ]

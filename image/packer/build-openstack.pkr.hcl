@@ -62,7 +62,7 @@ source "openstack" "bastion" {
     image_original_user = "ubuntu"
     os_type             = "linux"
     os_distro           = "ubuntu"
-    appbricks_version   = var.image_version
+    mycd_version        = var.image_version
   }
 }
 

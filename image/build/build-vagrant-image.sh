@@ -42,7 +42,7 @@ else
 fi
 
 # image name and version
-BOX_NAME="appbricks-bastion"
+BOX_NAME="mycs-bastion"
 BOX_VERSION=${1:-0.0.0}
 [[ $BOX_VERSION != D.* ]] || \
   BOX_VERSION=0.0.${BOX_VERSION#D.*}
@@ -54,12 +54,12 @@ function vagrant::build_box() {
   local box_version=$2
   local packer_manifest=$3
 
-  local existing_ver=$(curl -s "https://app.vagrantup.com/api/v1/box/appbricks/appbricks-bastion/version/${box_version}" \
+  local existing_ver=$(curl -s "https://app.vagrantup.com/api/v1/box/novassist/mycs-bastion/version/${box_version}" \
     --request GET \
     --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
     | jq -r .version)
   if [[ $existing_ver == $box_version ]]; then
-    curl -f -s "https://app.vagrantup.com/api/v1/box/appbricks/appbricks-bastion/version/${box_version}" \
+    curl -f -s "https://app.vagrantup.com/api/v1/box/novassist/mycs-bastion/version/${box_version}" \
       --request DELETE \
       --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
       >/dev/null 2>&1
@@ -86,9 +86,9 @@ echo -n "${BOX_VERSION}" > $BUILD_DIR/.download/version
 if [[ $IS_DEV_BUILD == yes ]]; then
   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
 elif [[ $MYCS_NODE_VER == latest ]]; then
-  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
 else
-  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
 fi
 
 # download mycloudspace api public key

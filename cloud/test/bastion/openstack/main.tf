@@ -4,12 +4,6 @@
 
 locals {
   openstack_vpc_dns_zone = "test-${lower(var.region)}.ovh.appbricks.io"
-  aws_peer = {
-    region       = "us-east-1"
-    vpc_cidr     = "172.20.8.0/22"
-    bastion_fqdn = "test-us-east-1.aws.appbricks.io"
-    root_ca_file = "${path.module}/../aws/.us-east-1/root-ca.pem"
-  }
 }
 
 module "bootstrap" {
@@ -72,9 +66,11 @@ module "bootstrap" {
 
   vpn_tunnel_all_traffic = "yes"
 
-  # Site-to-site IPsec gateway to AWS inceptor (UK1 -> us-east-1)
+  # Site-to-site IPsec gateway to AWS inceptor (OVH UK1 -> AWS us-east-1)
   vpn_gateway_enabled    = true
   vpn_gateway_peer_cidrs = ["172.20.9.192/26"]
+
+  vpn_gateway_peer_export_path = "${path.module}/.${var.region}/ovh-${var.region}-peer.yml"
 
   bastion_allow_public_ssh = true
 
@@ -131,8 +127,8 @@ resource "local_file" "root-ca-cert" {
 #
 
 provider "openstack" {
-  region       = var.region
-  max_retries  = 10
+  region      = var.region
+  max_retries = 10
 }
 
 # Route53 API region (parent zone ovh.appbricks.io lives in AWS)

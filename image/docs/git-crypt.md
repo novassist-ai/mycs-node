@@ -7,7 +7,7 @@ If you need to encrypt files within a git repository it can be done using [git-c
   Export your GPG as follows and base64 encode it. 
 
   ```
-  gpg --export-secret-key -a msamaratunga@appbricks.net | base64
+  gpg --export-secret-key -a msamaratunga@mycloudspace.org | base64
   ```
 
   Copy the output as the content for the cloud-config configuration file saved to `<ROOT USER HOME>/git-crypt-user.pem` as follows.

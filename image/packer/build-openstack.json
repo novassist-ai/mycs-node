@@ -40,7 +40,7 @@
                 "image_original_user": "ubuntu",
                 "os_type": "linux",
                 "os_distro": "ubuntu",
-                "appbricks_version": "{{user `image_version`}}"
+                "mycs_bastion_version": "{{user `image_version`}}"
             }
         }
     ],

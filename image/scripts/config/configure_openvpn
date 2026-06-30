@@ -58,7 +58,7 @@ function configure_openvpn() {
   sed -i "s|#set_var EASYRSA_REQ_COUNTRY\s*\".*\"|set_var EASYRSA_REQ_COUNTRY\\t\"${config_vpn_vpn_cert_country:-US}\"|" vars
   sed -i "s|#set_var EASYRSA_REQ_PROVINCE\s*\".*\"|set_var EASYRSA_REQ_PROVINCE\\t\"${config_vpn_vpn_cert_province:-MA}\"|" vars
   sed -i "s|#set_var EASYRSA_REQ_CITY\s*\".*\"|set_var EASYRSA_REQ_CITY\\t\"${config_vpn_vpn_cert_city:-Boston}\"|" vars
-  sed -i "s|#set_var EASYRSA_REQ_ORG\s+\".*\"|set_var EASYRSA_REQ_ORG\\t\"${config_vpn_vpn_cert_org:-AppBricks}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_ORG\s+\".*\"|set_var EASYRSA_REQ_ORG\\t\"${config_vpn_vpn_cert_org:-NovAssist}\"|" vars
   sed -i "s|#set_var EASYRSA_REQ_OU\s+\".*\"|set_var EASYRSA_REQ_OU\\t\"${config_vpn_vpn_cert_ou:-Development}\"|" vars
 
   # Removing RANDFILE reference that causes error

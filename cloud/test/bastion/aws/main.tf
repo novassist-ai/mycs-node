@@ -3,15 +3,9 @@ data "aws_region" "default" {
 }
 
 locals {
-  vpc_cidr = var.regional_vpc_cidr[data.aws_region.default.region]["vpc_cidr"]
+  vpc_cidr         = var.regional_vpc_cidr[data.aws_region.default.region]["vpc_cidr"]
   vpc_subnet_index = element(regex("\\d{1,3}\\.(\\d{1,3})\\.\\d{1,3}\\.\\d{1,3}\\/\\d+", local.vpc_cidr), 0)
   aws_vpc_dns_zone = "test-${data.aws_region.default.region}.aws.appbricks.io"
-  openstack_peer = {
-    region       = "UK1"
-    vpc_cidr     = "172.20.64.0/22"
-    bastion_fqdn = "test-uk1.ovh.appbricks.io"
-    root_ca_file = "${path.module}/../openstack/.UK1/root-ca.pem"
-  }
 }
 
 #
@@ -21,7 +15,7 @@ module "bootstrap" {
   source = "../../../modules/bootstrap/aws"
 
   mycs_node_private_key = var.mycs_node_private_key
-  mycs_node_id_key = var.mycs_node_id_key
+  mycs_node_id_key      = var.mycs_node_id_key
 
   #
   # Company information used in certificate creation
@@ -87,15 +81,17 @@ module "bootstrap" {
 
   vpn_tunnel_all_traffic = "yes"
 
-  # Site-to-site IPsec gateway to OpenStack inceptor (us-east-1 -> UK1)
+  # Site-to-site IPsec gateway to OpenStack inceptor (AWS us-east-1 -> OVH UK1)
   vpn_gateway_enabled    = true
   vpn_gateway_peer_cidrs = ["172.20.64.128/26"]
+
+  vpn_gateway_peer_export_path = "${path.module}/.${data.aws_region.default.region}/aws-${data.aws_region.default.region}-peer.yml"
 
   # Whether to allow SSH access to bastion server
   bastion_allow_public_ssh = true
 
   bastion_host_name = "inceptor"
-  bastion_use_fqdn = var.attach_dns_zone
+  bastion_use_fqdn  = var.attach_dns_zone
 
   bastion_instance_type = "t4g.small"
 

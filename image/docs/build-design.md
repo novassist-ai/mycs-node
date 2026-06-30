@@ -228,11 +228,11 @@ Dev builds require **AWS credentials** even when building GCP, Azure, or OVH ima
 
 | Cloud | Image name pattern | Notes |
 |-------|-------------------|-------|
-| AWS | `appbricks-bastion_{version}` | ARM64 AMI |
-| GCP | `appbricks-bastion-{version}` | Dots → hyphens; exported `.tar.gz` to GCS |
-| Azure | `appbricks-bastion-{env}_{location}` | Snapshot: `appbricksbastion_{version}_{location}` |
-| OVH | `appbricks-bastion_{version}` | Private Glance image; QCOW2 export for publish |
-| Vagrant | `appbricks/appbricks-bastion` | VirtualBox box on Vagrant Cloud |
+| AWS | `mycs-bastion_{version}` | ARM64 AMI |
+| GCP | `mycs-bastion-{version}` | Dots → hyphens; exported `.tar.gz` to GCS |
+| Azure | `mycs-bastion-{env}_{location}` | Snapshot: `novassistbastion_{version}_{location}` |
+| OVH | `mycs-bastion_{version}` | Private Glance image; QCOW2 export for publish |
+| Vagrant | `mycloudspace/mycs-bastion` | VirtualBox box on Vagrant Cloud |
 
 Log files: `build-{cloud}-{region}.log` in the directory where the build script is invoked.
 
@@ -250,7 +250,7 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 1. Creates version `D.YYMMDDHHMMSS`.
 2. Deletes prior dev AMIs matching `D.*`.
 3. Builds in `us-east-1`, publishes to additional AWS regions.
-4. Triggers dependent build in `appbricks/spacenode-cookbook`.
+4. Triggers dependent build in `novassist/spacenode-cookbook`.
 
 **Prod workflow:**
 

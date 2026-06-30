@@ -42,7 +42,7 @@ fi
 
 # Append version to image name
 IMAGE_VERSION=${1:-dev}
-IMAGE_NAME="appbricks-bastion"
+IMAGE_NAME="mycs-bastion"
 PUBLISH_IMAGE_NAME="${IMAGE_NAME}_${IMAGE_VERSION}"
 IMAGE_NAME="${IMAGE_NAME}-$(echo "${IMAGE_VERSION}" | tr '.' '-' | tr '[:upper:]' '[:lower:]')"
 
@@ -101,7 +101,7 @@ function google::build_image() {
     "gs://${publish_bucket}/logs/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" >/dev/null 2>&1
   set -e
   gsutil mv \
-    "gs://${publish_bucket}/appbricks-bastion/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" \
+    "gs://${publish_bucket}/mycs-bastion/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" \
     "gs://${publish_bucket}/logs/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log"
 }
 
@@ -110,12 +110,13 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist/mycs-node}
 if [[ $IS_DEV_BUILD == yes ]]; then
   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
 elif [[ $MYCS_NODE_VER == latest ]]; then
-  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 else
-  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo appbricks/mycloudspace-node --dir .download
+  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 fi
 
 # download mycloudspace api public key

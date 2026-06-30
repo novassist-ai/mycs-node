@@ -63,7 +63,7 @@ variable "regional_vpc_cidr" {
       vpc_cidr = "172.20.0.0/22"
     }
     # US West (Oregon)
-    us-west-2  = {
+    us-west-2 = {
       vpc_cidr = "172.20.4.0/22"
     }
     # US East (N. Virginia)

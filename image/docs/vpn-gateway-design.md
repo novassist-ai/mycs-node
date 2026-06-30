@@ -89,7 +89,7 @@ Terraform (`cloud-inceptor/modules/bastion-config`) emits a minimal block:
 vpn_gateway:
   enabled: yes
   protocol: ipsec
-  local_id: test-uk1.ovh.appbricks.io   # bastion FQDN
+  local_id: test-uk1.ovh.NnovAassist.ai   # bastion FQDN
 ```
 
 | Key | Purpose |
@@ -130,8 +130,8 @@ File: `cloud-inceptor/examples/inceptor/openstack/.UK1/aws-use1-peer.yml`
 
 ```yaml
 name: aws-us-east-1
-host: test-us-east-1.aws.appbricks.io
-remote_id: test-us-east-1.aws.appbricks.io
+host: test-us-east-1.aws.NnovAassist.ai
+remote_id: test-us-east-1.aws.NnovAassist.ai
 local_cidr: 172.20.64.128/26
 remote_cidr: 172.20.9.192/26
 direction: egress
@@ -151,8 +151,8 @@ File: `cloud-inceptor/examples/inceptor/aws/.us-east-1/ovh-uk1-peer.yml`
 
 ```yaml
 name: ovh-uk1
-host: test-uk1.ovh.appbricks.io
-remote_id: test-uk1.ovh.appbricks.io
+host: test-uk1.ovh.NnovAassist.ai
+remote_id: test-uk1.ovh.NnovAassist.ai
 local_cidr: 172.20.9.192/26
 remote_cidr: 172.20.64.128/26
 remote_peer_vpn_subnet: 192.168.111.0/24   # OVH road-warrior subnet

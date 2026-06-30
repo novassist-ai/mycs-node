@@ -194,7 +194,7 @@ cat << ---EOF > ${user_home}/${vpn_server_description}.mobileconfig
 <dict>
   <key>PayloadDisplayName</key><string>IKEv2 VPN - ${vpn_server_description}</string>
   <key>PayloadType</key><string>Configuration</string>
-  <key>PayloadIdentifier</key><string>io.appbricks.ikev2vpn.${payload_uuid}</string>
+  <key>PayloadIdentifier</key><string>io.mycs.ikev2vpn.${payload_uuid}</string>
   <key>PayloadUUID</key><string>${payload_uuid}</string>
   <key>PayloadVersion</key><integer>1</integer>
   <key>PayloadRemovalDisallowed</key><false/>  

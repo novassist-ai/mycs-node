@@ -21,9 +21,9 @@ if [[ ! -e $GOOGLE_CREDENTIALS ]]; then
 fi
 
 if [[ -n $1 ]]; then
-  IMAGE_NAME="appbricks-bastion-$1"
+  IMAGE_NAME="mycs-bastion-$1"
 else
-  IMAGE_NAME="appbricks-bastion"
+  IMAGE_NAME="mycs-bastion"
 fi
 
 REGION="${2:-${GOOGLE_REGION-all}}"
@@ -38,7 +38,7 @@ function google::delete_shared_image_objects() {
   echo -e "Removing shared images and logs from bucket '$publish_bucket'..."
 
   set +e
-  gsutil rm "gs://${publish_bucket}/appbricks-bastion/${image_object_name}.tar.gz"
+  gsutil rm "gs://${publish_bucket}/mycs-bastion/${image_object_name}.tar.gz"
   gsutil rm "gs://${publish_bucket}/logs/${image_object_name}.tar.gz.exporter.log"
   set -e
 
@@ -50,8 +50,8 @@ function google::delete_shared_images() {
   local image=$1
   local region=$2
 
-  local image_version=$(echo ${image#appbricks-bastion-*} | tr '[:lower:]' '[:upper:]' | tr '-' '.')
-  local image_object_name="appbricks-bastion_${image_version}"
+  local image_version=$(echo ${image#mycs-bastion-*} | tr '[:lower:]' '[:upper:]' | tr '-' '.')
+  local image_object_name="mycs-bastion_${image_version}"
 
   local regions
   local publish_bucket
@@ -72,7 +72,7 @@ function google::delete_images() {
   local image=$1
   local region=$2
 
-  local image_list=$(gcloud compute images list --filter="name~'$image'" | awk '/appbricks-bastion/{ print $1 }' 2>/dev/null)
+  local image_list=$(gcloud compute images list --filter="name~'$image'" | awk '/mycs-bastion/{ print $1 }' 2>/dev/null)
   for image in $image_list; do
     echo -e "\nDeleting image with name '$image'..."
     gcloud compute images delete -q "$image" &

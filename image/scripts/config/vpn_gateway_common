@@ -153,13 +153,22 @@ function vpn_gateway_peer_load {
 
     vpn_gateway_peer_load_remote_ca "$peer_file" || return 1
 
+    if [[ -z $peer_local_cidr ]]; then
+        peer_local_cidr="${config_vpn_gateway_local_cidr:-}"
+    fi
+
     local key
-    for key in peer_name peer_host peer_local_cidr peer_remote_cidr peer_direction peer_auth; do
+    for key in peer_name peer_host peer_remote_cidr peer_direction peer_auth; do
         [[ -n ${!key} ]] || {
             echo "ERROR! peer $peer_file missing required key: ${key#peer_}" >&2
             return 1
         }
     done
+
+    [[ -n $peer_local_cidr ]] || {
+        echo "ERROR! peer $peer_file missing local_cidr (set in peer YAML or vpn_gateway.local_cidr in /etc/mycs/config.yml)" >&2
+        return 1
+    }
 
     case "$peer_direction" in
         egress|ingress|bidirectional) ;;

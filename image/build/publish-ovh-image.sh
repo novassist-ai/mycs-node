@@ -94,7 +94,7 @@ function ovh::publish_image() {
     --property image_original_user=ubuntu \
     --property os_type=linux \
     --property os_distro=ubuntu \
-    --property "appbricks_version=${image_version}"
+    --property "mycs_bastion_version=${image_version}"
 
   local dest_image_id
   dest_image_id=$(ovh::with_region "$dest_region" openstack image list \

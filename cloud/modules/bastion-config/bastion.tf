@@ -12,8 +12,8 @@ resource "tls_private_key" "bastion-ssh-key" {
 #
 
 resource "random_string" "bastion-admin-password" {
-  length  = 32
-  special = true
+  length           = 32
+  special          = true
   override_special = "~!@#%^*_+=[]:,./"
 }
 
@@ -164,7 +164,7 @@ vpn:
   subnet: '${var.vpn_network}'
   netmask: '${cidrnetmask(var.vpn_network)}'
   restricted_subnet: '${var.vpn_restricted_network}'
-  server_domain: '${element(var.vpc_internal_dns_zones, length(var.vpc_internal_dns_zones)-1)}'
+  server_domain: '${element(var.vpc_internal_dns_zones, length(var.vpc_internal_dns_zones) - 1)}'
   server_description: '${var.vpc_name}'
   tunnel_client_traffic: ${var.vpn_tunnel_all_traffic}
   idle_action: ${var.vpn_idle_action}
@@ -196,12 +196,13 @@ vpn_gateway:
   enabled: ${var.vpn_gateway_enabled ? "yes" : "no"}
   protocol: '${var.vpn_gateway_protocol}'
   local_id: '${var.bastion_fqdn}'
+  local_cidr: '${var.bastion_admin_subnet_cidr}'
 
 CONFIG
   index_html = templatefile(
     "${path.module}/www-static-home/index.html",
     {
-      environment = var.vpc_name
+      environment  = var.vpc_name
       bastion_fqdn = var.bastion_fqdn
     }
   )

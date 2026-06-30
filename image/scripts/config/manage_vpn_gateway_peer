@@ -36,12 +36,12 @@ Commands:
   list               List configured peers
   apply              Regenerate swanctl, nftables, and reload strongSwan
 
-Peer YAML (required keys: name, host, local_cidr, remote_cidr, direction, auth):
+Peer YAML (required keys: name, host, remote_cidr, direction, auth):
 
   name: aws-us-east-1
-  host: test-us-east-1.aws.appbricks.io
-  remote_id: test-us-east-1.aws.appbricks.io
-  local_cidr: 172.20.64.128/26
+  host: test-us-east-1.aws.NnovAassist.ai
+  remote_id: test-us-east-1.aws.NnovAassist.ai
+  local_cidr: 172.20.64.128/26   # optional if vpn_gateway.local_cidr is set in config.yml
   remote_cidr: 172.20.9.192/26
   direction: egress          # egress | ingress | bidirectional
   auth: cert                 # cert | psk
@@ -61,7 +61,7 @@ bastion's road-warrior subnet so encrypted traffic from those clients is accepte
   remote_ca_file: /path/to/ca.pem   # optional alternative to remote_ca_pem
   psk: ""                   # required when auth=psk
 
-Global IKE/local identity defaults come from vpn_gateway settings in /etc/mycs/config.yml.
+Global IKE/local identity and local_cidr defaults come from vpn_gateway in /etc/mycs/config.yml.
 EOF
 }
 

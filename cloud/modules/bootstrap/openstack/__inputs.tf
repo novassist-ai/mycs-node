@@ -259,6 +259,12 @@ variable "vpn_gateway_peer_cidrs" {
   description = "Remote VPN peer admin CIDRs allowed into the internal security group when bastion_as_nat is true."
 }
 
+variable "vpn_gateway_peer_export_path" {
+  type        = string
+  default     = ""
+  description = "When set, write this bastion's VPN gateway peer export YAML to this path."
+}
+
 variable "wireguard_service_port" {
   default = ""
 }

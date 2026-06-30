@@ -18,9 +18,9 @@ if [[ $? -ne 0 ]]; then
 fi
 
 if [[ -n $1 ]]; then
-  IMAGE_NAME="appbricks-bastion_$1"
+  IMAGE_NAME="mycs-bastion_$1"
 else
-  IMAGE_NAME="appbricks-bastion"
+  IMAGE_NAME="mycs-bastion"
 fi
 
 REGION="${2:-${AWS_DEFAULT_REGION-all}}"

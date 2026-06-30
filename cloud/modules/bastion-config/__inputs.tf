@@ -58,7 +58,7 @@ variable "root_ca_cert" {
 # List of DNS names to associate bastion cert with
 #
 variable "cert_domain_names" {
-  type = list
+  type = list(any)
 }
 
 #
@@ -77,11 +77,11 @@ variable "vpc_dns_zone" {
 }
 
 variable "vpc_internal_dns_zones" {
-  type = list
+  type = list(any)
 }
 
 variable "vpc_internal_dns_records" {
-  type = list
+  type = list(any)
 }
 
 #
@@ -152,7 +152,7 @@ variable "bastion_admin_itf_ip" {
 # domain. The second network if present is
 # assumed to be the administration network.
 variable "bastion_nic_config" {
-  type = list
+  type = list(any)
 }
 
 #
@@ -229,6 +229,23 @@ variable "vpn_gateway_enabled" {
 
 variable "vpn_gateway_protocol" {
   default = "ipsec"
+}
+
+#
+# Optional VPN gateway peer export for remote sites (manage_vpn_gateway_peer).
+# When vpn_gateway_peer_export_path is set, writes this bastion's peer details
+# (FQDN, admin CIDR, root CA) for a remote site to complete and apply.
+#
+variable "vpn_gateway_peer_export_path" {
+  type        = string
+  default     = ""
+  description = "Filesystem path for this bastion's VPN gateway peer export YAML. When empty, no file is written."
+}
+
+variable "bastion_admin_subnet_cidr" {
+  type        = string
+  default     = ""
+  description = "Admin subnet CIDR of this bastion; required when vpn_gateway_peer_export_path is set."
 }
 
 #

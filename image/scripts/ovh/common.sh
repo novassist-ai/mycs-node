@@ -43,7 +43,7 @@ function ovh::validate_auth() {
 
 function ovh::image_name_for_version() {
   local version=$1
-  echo "appbricks-bastion_${version}"
+  echo "mycs-bastion_${version}"
 }
 
 function ovh::resolve_openstack_ids() {
@@ -97,7 +97,7 @@ function ovh::image_property_args() {
 --property image_original_user=ubuntu
 --property os_type=linux
 --property os_distro=ubuntu
---property appbricks_version=${version}
+--property mycs_bastion_version=${version}
 EOF
 }
 

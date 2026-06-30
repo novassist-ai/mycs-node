@@ -66,7 +66,7 @@ build {
   }
 
   post-processor "vagrant-cloud" {
-    box_tag = "appbricks/appbricks-bastion"
+    box_tag = "mycloudspace/mycs-bastion"
     version = var.version
   }
 }

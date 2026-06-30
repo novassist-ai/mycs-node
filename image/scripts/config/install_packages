@@ -297,11 +297,11 @@ RUN apk update && \
 
 RUN wget -O - https://raw.githubusercontent.com/jacklul/pihole-updatelists/master/install.sh | bash
 ---EOF
-docker build . -t appbricks/pihole:latest
+docker build . -t mycs/pihole:latest
 popd
 
-docker save appbricks/pihole:latest | gzip > /tmp/inceptor-scripts/pihole.tgz
-docker rmi appbricks/pihole:latest
+docker save mycs/pihole:latest | gzip > /tmp/inceptor-scripts/pihole.tgz
+docker rmi mycs/pihole:latest
 docker system prune -a
 
 systemctl stop docker
@@ -437,8 +437,7 @@ ip_prefixes:
 #  level: debug
 ---EOF
 
-curl -L https://raw.githubusercontent.com/appbricks/headscale/main/derp.yaml \
-  -o /etc/headscale/derp.yaml
+# TODO: Create derp server list in /etc/headscale/derp.yaml
 
 # Setup cloud-inceptor initialization scripts
 rm /tmp/inceptor-scripts/install_packages

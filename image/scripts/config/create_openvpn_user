@@ -360,7 +360,7 @@ if [[ -z "$vpn_obfuscation_tunnel_port_1" ]]; then
 <dict>
   <key>PayloadDisplayName</key><string>OpenVPN - ${vpn_server_description}</string>
   <key>PayloadType</key><string>Configuration</string>
-  <key>PayloadIdentifier</key><string>io.appbricks.openvpn.${payload_uuid}</string>
+  <key>PayloadIdentifier</key><string>io.mycs.openvpn.${payload_uuid}</string>
   <key>PayloadUUID</key><string>${payload_uuid}</string>
   <key>PayloadVersion</key><integer>1</integer>
   <key>PayloadRemovalDisallowed</key><false/>  

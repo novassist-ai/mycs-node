@@ -1,6 +1,6 @@
 # Runtime Bootstrap Design
 
-This document describes how a bastion instance is configured on **first boot** after Terraform in [`cloud-inceptor`](https://github.com/appbricks/cloud-inceptor) launches it with cloud-init user-data.
+This document describes how a bastion instance is configured on **first boot** after Terraform in [`cloud-inceptor`](https://github.com/novassist-ai/mycs-node.git/cloud) launches it with cloud-init user-data.
 
 ---
 

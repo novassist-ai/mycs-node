@@ -43,9 +43,9 @@ module "config" {
   certify_bastion = var.attach_dns_zone && var.certify_bastion
 
   bastion_dns = (
-    length(var.bastion_dns) == 0 
-      ? cidrhost(var.vpc_cidr, 2)
-      : var.bastion_dns
+    length(var.bastion_dns) == 0
+    ? cidrhost(var.vpc_cidr, 2)
+    : var.bastion_dns
   )
 
   bastion_dmz_itf_ip   = local.bastion_dmz_itf_ip
@@ -53,39 +53,39 @@ module "config" {
 
   bastion_nic_config = (
     var.configure_admin_network
-      ? [ 
-          join("|", 
-            tolist([
-              "", // AWS will assign static IP via DHCP
-              aws_subnet.dmz.0.cidr_block,
-              "0.0.0.0/0"
-            ]),
-          ),
-          join("|", 
-            var.bastion_as_nat
-            ? tolist([
-              local.bastion_admin_itf_ip, 
-              aws_subnet.admin.0.cidr_block,
-              "",
-              ""
-            ])
-            : tolist([
-              local.bastion_admin_itf_ip, 
-              aws_subnet.admin.0.cidr_block,
-              length(var.global_internal_cidr) == 0 ? var.vpc_cidr : var.global_internal_cidr,
-              cidrhost(aws_subnet.admin.0.cidr_block, 1)
-            ])
-          ) 
-        ]
-      : [ 
-          join("|", 
-            tolist([
-              "", // AWS will assign static IP via DHCP
-              aws_subnet.dmz.0.cidr_block,
-              "0.0.0.0/0"
-            ]),
-          ) 
-        ]
+    ? [
+      join("|",
+        tolist([
+          "", // AWS will assign static IP via DHCP
+          aws_subnet.dmz.0.cidr_block,
+          "0.0.0.0/0"
+        ]),
+      ),
+      join("|",
+        var.bastion_as_nat
+        ? tolist([
+          local.bastion_admin_itf_ip,
+          aws_subnet.admin.0.cidr_block,
+          "",
+          ""
+        ])
+        : tolist([
+          local.bastion_admin_itf_ip,
+          aws_subnet.admin.0.cidr_block,
+          length(var.global_internal_cidr) == 0 ? var.vpc_cidr : var.global_internal_cidr,
+          cidrhost(aws_subnet.admin.0.cidr_block, 1)
+        ])
+      )
+    ]
+    : [
+      join("|",
+        tolist([
+          "", // AWS will assign static IP via DHCP
+          aws_subnet.dmz.0.cidr_block,
+          "0.0.0.0/0"
+        ]),
+      )
+    ]
   )
 
   data_volume_name = var.bastion_data_disk_device_name
@@ -120,6 +120,13 @@ module "config" {
 
   vpn_gateway_enabled  = var.vpn_gateway_enabled
   vpn_gateway_protocol = var.vpn_gateway_protocol
+
+  vpn_gateway_peer_export_path = var.vpn_gateway_peer_export_path
+  bastion_admin_subnet_cidr = (
+    var.configure_admin_network
+    ? aws_subnet.admin[0].cidr_block
+    : aws_subnet.dmz[0].cidr_block
+  )
 }
 
 locals {
@@ -127,13 +134,13 @@ locals {
   # are protected by the DNS sink hole vs ips that are 
   # in open can only be done for the wireguard vpn type.
   vpn_restricted_network = (
-    var.vpn_type == "wireguard" 
-      ? cidrsubnet(
-          var.vpn_network, 
-          var.vpn_protected_sub_range, 
-          pow(2, var.vpn_protected_sub_range)-1
-        )
-      : var.vpn_network
+    var.vpn_type == "wireguard"
+    ? cidrsubnet(
+      var.vpn_network,
+      var.vpn_protected_sub_range,
+      pow(2, var.vpn_protected_sub_range) - 1
+    )
+    : var.vpn_network
   )
   # Wireguard will be configured for use as a mesh between
   # peered VPC if VPN type to connected client is different.
@@ -151,9 +158,9 @@ locals {
   #
   #
   wireguard_subnet_ip = (
-    var.vpn_type == "wireguard" 
-      ? "${cidrhost(var.vpn_network, 1)}/${split("/", var.vpn_network)[1]}"
-      : "${cidrhost(var.wireguard_mesh_network, var.wireguard_mesh_node)}/${split("/", var.wireguard_mesh_network)[1]}"
+    var.vpn_type == "wireguard"
+    ? "${cidrhost(var.vpn_network, 1)}/${split("/", var.vpn_network)[1]}"
+    : "${cidrhost(var.wireguard_mesh_network, var.wireguard_mesh_node)}/${split("/", var.wireguard_mesh_network)[1]}"
   )
   # If the bastion has been allocated an elastic IP then 
   # return that. Otherwise pass an indicator in the field
@@ -161,27 +168,27 @@ locals {
   # its externally facing Ip.
   bastion_public_ip = (
     var.configure_admin_network
-      ? aws_eip.bastion-public.0.public_ip
-      : "aws"      
+    ? aws_eip.bastion-public.0.public_ip
+    : "aws"
   )
   bastion_fqdn = (
     var.attach_dns_zone
-      ? var.vpc_dns_zone
-      : "aws"
+    ? var.vpc_dns_zone
+    : "aws"
   )
   cert_domain_names = (
     var.attach_dns_zone
-      ? [
-        "*.mycloudspace.io",    // <spaceid>.mycloudspace.io
-        var.vpc_dns_zone
+    ? [
+      "*.mycloudspace.io", // <spaceid>.mycloudspace.io
+      var.vpc_dns_zone
       ] : [
-        "*.mycloudspace.io",    // <spaceid>.mycloudspace.io
-        "*.mycs.appbricks.org", // lookup ip by IP DNS - 1-1-1-1.mycs.appbricks.org
-        
-        # see https://docs.aws.amazon.com/vpc/latest/userguide/vpc-dns.html#vpc-dns-hostnames
-        var.region == "us-east-1" ? "*.compute-1.amazonaws.com" : "*.${var.region}.compute.amazonaws.com",
+      "*.mycloudspace.io",    // <spaceid>.mycloudspace.io
+      "*.mycs.appbricks.org", // lookup ip by IP DNS - 1-1-1-1.mycs.appbricks.org
 
-        var.vpc_dns_zone
-      ]
+      # see https://docs.aws.amazon.com/vpc/latest/userguide/vpc-dns.html#vpc-dns-hostnames
+      var.region == "us-east-1" ? "*.compute-1.amazonaws.com" : "*.${var.region}.compute.amazonaws.com",
+
+      var.vpc_dns_zone
+    ]
   )
 }

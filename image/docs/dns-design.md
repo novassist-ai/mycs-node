@@ -142,7 +142,7 @@ Pi-hole container receives environment for admin password, DNS listening, and vo
 
 ### Pi-hole (Docker)
 
-- Image: `appbricks/pihole:latest` (built during `install_packages` with updatelists)
+- Image: `mycs/pihole:latest` (built during `install_packages` with updatelists)
 - Provides ad/tracker blocklists for general DNS queries
 - Requires Docker (`configure_docker` runs first)
 

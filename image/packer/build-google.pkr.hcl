@@ -48,9 +48,9 @@ source "googlecompute" "bastion" {
   zone               = var.gcp_zone
   source_image_family = var.source_image_family
   ssh_username       = "ubuntu"
-  image_family       = "appbricks-bastion"
+  image_family       = "mycs-bastion"
   image_name         = var.image_name
-  image_description  = "Appbricks bastion instance base image"
+  image_description  = "MyCS bastion instance base image"
   disk_size          = 10
 }
 
@@ -86,7 +86,7 @@ build {
   }
 
   post-processor "googlecompute-export" {
-    paths              = ["gs://${var.publish_bucket}/appbricks-bastion/${var.publish_image_name}.tar.gz"]
+    paths              = ["gs://${var.publish_bucket}/mycs-bastion/${var.publish_image_name}.tar.gz"]
     keep_input_artifact = true
   }
 }
