@@ -99,7 +99,8 @@ resource "azurerm_storage_blob" "bastion-image-vhd" {
 
   name = "${var.bastion_image_name}.vhd"
 
-  storage_container_id = azurerm_storage_container.bastion-image-storage-container.0.id
+  storage_account_name   = azurerm_storage_account.bootstrap-storage-account.name
+  storage_container_name = azurerm_storage_container.bastion-image-storage-container.0.name
 
   type       = "Block"
   source_uri = "https://${var.bastion_image_storage_account_prefix}${local.storage_region}.blob.core.windows.net/${var.bastion_image_container}/${var.bastion_image_name}.vhd"
