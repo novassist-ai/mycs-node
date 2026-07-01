@@ -328,12 +328,23 @@ function vpn_gateway_peer_remote_source_cidrs {
     local direction=$1
     local remote_cidr=$2
     local remote_vpn_subnet=$3
+    local local_rw
 
     echo "$remote_cidr"
     case "$direction" in
         ingress|bidirectional)
-            [[ -n $remote_vpn_subnet && "$remote_vpn_subnet" != "$remote_cidr" ]] \
-                && echo "$remote_vpn_subnet"
+            if [[ -n $remote_vpn_subnet && "$remote_vpn_subnet" != "$remote_cidr" ]]; then
+                if network_roadwarrior_enabled; then
+                    local_rw=$(network_roadwarrior_source_cidr)
+                    if [[ -n $local_rw && "$remote_vpn_subnet" == "$local_rw" ]]; then
+                        echo "WARNING! peer remote_peer_vpn_subnet ${remote_vpn_subnet} equals local road-warrior subnet; omitting from remote_ts (site-to-site must not claim the local VPN pool)" >&2
+                    else
+                        echo "$remote_vpn_subnet"
+                    fi
+                else
+                    echo "$remote_vpn_subnet"
+                fi
+            fi
             ;;
     esac
 }
