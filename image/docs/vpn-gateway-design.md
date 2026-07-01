@@ -15,6 +15,7 @@ Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md
 5. [Scripts and Files](#scripts-and-files)
 6. [strongSwan Per-Peer Configuration](#strongswan-per-peer-configuration)
 7. [Traffic Selectors and Directions](#traffic-selectors-and-directions)
+   - [Reference topology (OVH egress ↔ AWS ingress)](#reference-topology-ovh-egress--aws-ingress)
    - [How ingress and egress peers work together](#how-ingress-and-egress-peers-work-together)
    - [Per-direction behaviour](#per-direction-behaviour)
    - [Paired egress + ingress: end-to-end flows](#paired-egress--ingress-end-to-end-flows)
@@ -109,6 +110,39 @@ Additional global IKE/ESP defaults may be present in config or use script defaul
 
 All peer-specific parameters (remote host, CIDRs, direction, auth, CA) live in peer YAML, not Terraform.
 
+### Who is egress and who is ingress?
+
+`direction` is set **separately on each bastion** in **that bastion's** peer file. There is no shared “link direction” — you choose a role per node.
+
+For the standard **OVH ↔ AWS** test/production layout:
+
+| Bastion | Cloud | `direction` in **this node's** peer YAML | Peer file (on this node) | Points at |
+|---------|-------|------------------------------------------|--------------------------|-----------|
+| **OVH UK1** | OpenStack | **`egress`** | `/data/strongswan/peers/aws-us-east-1.yaml` | AWS bastion |
+| **AWS us-east-1** | AWS | **`ingress`** | `/data/strongswan/peers/ovh-uk1.yaml` | OVH bastion |
+
+```mermaid
+flowchart LR
+  subgraph ovh [OVH bastion]
+    OY[peer YAML<br/>direction: egress]
+  end
+
+  subgraph aws [AWS bastion]
+    AY[peer YAML<br/>direction: ingress]
+  end
+
+  OY -->|OVH initiates tunnel| TUN[Site-to-site IPsec]
+  TUN --> AY
+  AY -->|AWS waits for OVH| TUN
+```
+
+- **OVH** runs `direction: egress` → `start_action = start` → OVH calls `swanctl --initiate` on apply.
+- **AWS** runs `direction: ingress` → `start_action = none` → AWS does **not** initiate; it accepts IKE from OVH.
+
+Deploy **ingress (AWS) first**, then **egress (OVH)**, so AWS `remote_ts` is loaded before OVH brings the tunnel up.
+
+Throughout [§ Traffic Selectors and Directions](#traffic-selectors-and-directions), **OVH = egress** and **AWS = ingress** unless stated otherwise. Generic labels **A** / **B** mean the same pairing: A = egress side, B = ingress side.
+
 ---
 
 ## Peer YAML Schema
@@ -129,7 +163,9 @@ Required keys: `name`, `host`, `local_cidr`, `remote_cidr`, `direction`, `auth`
 | `remote_ca` | if auth=cert | Filename under `/data/strongswan/x509ca/` |
 | `remote_ca_pem` | no | Inline PEM staged on `add` |
 
-### Example — OVH egress peer
+### Example — OVH bastion peer file (`direction: egress`)
+
+**Runs on:** OVH UK1 bastion. **Remote peer:** AWS us-east-1.
 
 File: `cloud-inceptor/examples/inceptor/openstack/.UK1/aws-use1-peer.yml`
 
@@ -150,7 +186,9 @@ remote_ca_pem: |
 
 Egress peers automatically expand `local_ts` to include local road-warrior subnet (`config_vpn_subnet`) when road-warrior VPN is enabled.
 
-### Example — AWS ingress peer
+### Example — AWS bastion peer file (`direction: ingress`)
+
+**Runs on:** AWS us-east-1 bastion. **Remote peer:** OVH UK1.
 
 File: `cloud-inceptor/examples/inceptor/aws/.us-east-1/ovh-uk1-peer.yml`
 
@@ -229,76 +267,90 @@ swanctl --initiate --child <name>-net --ike vpn-gateway-<name>
 
 ## Traffic Selectors and Directions
 
-`direction` is set **on each bastion** in that bastion's peer YAML. It is not a single property of the link between two sites. When peering Site **A** (e.g. OVH) with Site **B** (e.g. AWS), each side has its own file describing how **it** connects to the other.
+### Reference topology (OVH egress ↔ AWS ingress)
 
-The recommended production pairing is **A = `egress`**, **B = `ingress`**. Together they form one site-to-site tunnel with complementary roles: A initiates and may send new flows toward B; B accepts and may receive new flows from A.
+All flow diagrams below use this pairing unless noted. Each row is **one physical bastion** and the `direction` value that must appear in **its own** peer YAML.
 
-Deeper reachability tables and additional flow variants are in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
+| | **OVH UK1** (egress) | **AWS us-east-1** (ingress) |
+|--|----------------------|-----------------------------|
+| **`direction`** | `egress` | `ingress` |
+| **Initiates tunnel?** | Yes (`swanctl --initiate`) | No (waits for OVH) |
+| **Admin CIDR (`local_cidr`)** | `172.20.64.128/26` | `172.20.9.192/26` |
+| **Peer admin CIDR (`remote_cidr`)** | `172.20.9.192/26` (AWS) | `172.20.64.128/26` (OVH) |
+| **Road-warrior pool** | `192.168.111.0/24` (local clients) | `192.168.111.0/24` (local clients) |
+| **`remote_peer_vpn_subnet`** | not required on egress | `192.168.111.0/24` (OVH's pool) |
+| **Example peer file on this node** | `aws-us-east-1-peer.yml` | `ovh-uk1-peer.yml` |
+
+When this doc uses **A** or **B**: **A = OVH (egress)**, **B = AWS (ingress)**.
+
+Additional reachability variants: [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
 
 ### How ingress and egress peers work together
 
-Think of the tunnel as two halves that must agree on **traffic selectors** (`local_ts` / `remote_ts`) and **who may start** the CHILD SA:
+The tunnel is two complementary halves. **OVH** proposes “my networks may send toward AWS admin”; **AWS** proposes “I accept traffic from OVH admin ± OVH road-warrior toward my admin”:
 
 ```mermaid
 flowchart TB
-  subgraph siteA [Site A — peer direction: egress]
-    A_lan[A admin LAN<br/>172.20.64.128/26]
-    A_rw[A road-warrior clients<br/>192.168.111.0/24]
-    A_bast[Bastion A]
-    A_lan --> A_bast
+  subgraph ovh [OVH UK1 — direction: egress in aws-us-east-1.yaml]
+    O_lan[OVH admin LAN<br/>172.20.64.128/26]
+    O_rw[OVH road-warrior clients<br/>192.168.111.0/24]
+    O_bast[OVH bastion]
+    O_lan --> O_bast
+    O_rw --> O_bast
+  end
+
+  subgraph aws [AWS us-east-1 — direction: ingress in ovh-uk1.yaml]
+    A_bast[AWS bastion]
+    A_lan[AWS admin LAN<br/>172.20.9.192/26]
+    A_rw[AWS road-warrior clients<br/>192.168.111.0/24]
+    A_bast --> A_lan
     A_rw --> A_bast
   end
 
-  subgraph siteB [Site B — peer direction: ingress]
-    B_bast[Bastion B]
-    B_lan[B admin LAN<br/>172.20.9.192/26]
-    B_rw[B road-warrior clients<br/>192.168.111.0/24]
-    B_bast --> B_lan
-    B_rw --> B_bast
-  end
+  O_bast -->|OVH initiates IKE/CHILD SA<br/>start_action = start| TUN[IPsec tunnel]
+  TUN --> A_bast
+  A_bast -->|AWS start_action = none<br/>waits for OVH| TUN
 
-  A_bast -->|initiates IKE/CHILD SA<br/>start_action = start| TUN[IPsec tunnel]
-  TUN --> B_bast
-  B_bast -->|start_action = none<br/>waits for A| TUN
-
-  A_bast -.->|local_ts: A_admin + A_rw| TUN
-  TUN -.->|remote_ts on A: B_admin| A_bast
-  B_bast -.->|local_ts: B_admin| TUN
-  TUN -.->|remote_ts on B: A_admin + A_rw| B_bast
+  O_bast -.->|OVH local_ts: OVH_admin + OVH_rw| TUN
+  TUN -.->|OVH remote_ts: AWS_admin| O_bast
+  A_bast -.->|AWS local_ts: AWS_admin| TUN
+  TUN -.->|AWS remote_ts: OVH_admin + OVH_rw| A_bast
 ```
 
-| On this bastion | `egress` | `ingress` | `bidirectional` |
-|-----------------|----------|-----------|-------------------|
+| On **this** bastion | `egress` (OVH) | `ingress` (AWS) | `bidirectional` |
+|---------------------|----------------|-----------------|-----------------|
 | **IKE `start_action`** | `start` — initiates CHILD SA | `none` — waits for remote | `start` — may initiate |
-| **Who brings tunnel up first** | This bastion | Remote bastion | Either side |
+| **Who brings tunnel up first** | This bastion (OVH) | Remote bastion (OVH) | Either side |
 | **nftables NEW forward** | Local → remote | Remote → local | Both |
 | **`local_ts`** | `local_cidr` + local `vpn.subnet` (if road-warrior enabled) | `local_cidr` only | Same as egress |
 | **`remote_ts`** | `remote_cidr` only | `remote_cidr` + `remote_peer_vpn_subnet` | Same as ingress |
 
-**Egress** on A means: A may **start** the tunnel, and **new** flows from A's local networks (admin ± road-warrior) toward B's `remote_cidr` are permitted by nftables and proposed in `local_ts`.
+**Egress (OVH):** OVH may **start** the tunnel. **New** flows from OVH admin and OVH road-warrior clients toward AWS `remote_cidr` are permitted by nftables and proposed in OVH's `local_ts`.
 
-**Ingress** on B means: B **does not** start the tunnel; it accepts IKE from A. **New** flows from B's peer networks (admin ± their road-warrior subnet) toward B's `local_cidr` are permitted and proposed in `remote_ts`.
+**Ingress (AWS):** AWS **does not** start the tunnel; it accepts IKE from OVH. **New** flows from OVH networks (admin ± OVH road-warrior) toward AWS `local_cidr` are permitted and proposed in AWS's `remote_ts`.
 
-**Bidirectional** on a bastion combines both: it may initiate **and** accept new flows in both directions for that peer.
+**Bidirectional:** same bastion both initiates and accepts new flows in both directions (not the default OVH/AWS layout).
 
 ### Per-direction behaviour
 
-#### Egress (initiator side)
+#### Egress (initiator side — OVH in reference topology)
+
+Applies to the bastion whose peer YAML contains `direction: egress` (OVH in the OVH ↔ AWS layout).
 
 ```mermaid
 flowchart LR
-  subgraph local [Local networks on egress bastion]
-    LAN[local_cidr<br/>admin subnet]
-    RW[vpn.subnet<br/>road-warrior pool]
+  subgraph local [On OVH — local networks]
+    LAN[local_cidr<br/>172.20.64.128/26]
+    RW[vpn.subnet<br/>192.168.111.0/24]
   end
 
-  subgraph bastion [Egress bastion]
+  subgraph bastion [OVH bastion — egress]
     SS[strongSwan<br/>start_action = start]
     NFT[nft mycs_vpn_gateway<br/>NEW: local → remote<br/>RELATED: remote → local]
   end
 
-  subgraph remote [Peer remote networks]
-    RLAN[remote_cidr<br/>peer admin subnet]
+  subgraph remote [Toward AWS — remote networks]
+    RLAN[remote_cidr<br/>172.20.9.192/26]
   end
 
   LAN --> NFT
@@ -311,22 +363,24 @@ flowchart LR
 - **Selectors:** `local_ts` = `local_cidr` (+ local road-warrior subnet when `vpn:` is enabled). `remote_ts` = `remote_cidr` only.
 - **Forwarding:** nft allows **new** connections from each egress source CIDR to `remote_cidr`, and **established/related** return traffic from `remote_cidr` back to `local_cidr` (and road-warrior pool for return).
 
-#### Ingress (responder side)
+#### Ingress (responder side — AWS in reference topology)
+
+Applies to the bastion whose peer YAML contains `direction: ingress` (AWS in the OVH ↔ AWS layout).
 
 ```mermaid
 flowchart LR
-  subgraph remote [Peer remote networks]
-    RLAN[remote_cidr<br/>peer admin subnet]
-    RRW[remote_peer_vpn_subnet<br/>peer road-warrior pool]
+  subgraph remote [From OVH — peer networks]
+    RLAN[remote_cidr<br/>172.20.64.128/26]
+    RRW[remote_peer_vpn_subnet<br/>192.168.111.0/24 OVH pool]
   end
 
-  subgraph bastion [Ingress bastion]
+  subgraph bastion [AWS bastion — ingress]
     SS[strongSwan<br/>start_action = none]
     NFT[nft mycs_vpn_gateway<br/>NEW: remote → local<br/>RELATED: local → remote]
   end
 
-  subgraph local [Local networks on ingress bastion]
-    LAN[local_cidr<br/>admin subnet]
+  subgraph local [On AWS — local networks]
+    LAN[local_cidr<br/>172.20.9.192/26]
   end
 
   RLAN -->|ESP remote_ts → local_ts| SS
@@ -363,107 +417,115 @@ flowchart TB
 - Use when both sites must initiate tunnels, or when local road-warrior clients on **both** sides need to reach the remote admin LAN.
 - Both sides `bidirectional` is valid but may produce duplicate CHILD_SA log lines if both initiate; usually harmless if an SA is already up.
 
-### Paired egress + ingress: end-to-end flows
+### Paired egress + ingress: end-to-end flows (OVH ↔ AWS)
 
-Example: OVH = **egress**, AWS = **ingress**. Admin subnets `172.20.64.128/26` ↔ `172.20.9.192/26`, shared road-warrior pool `192.168.111.0/24`.
+**OVH** peer file: `direction: egress`. **AWS** peer file: `direction: ingress`.
 
-**Deploy order:** apply **ingress** peer on B first (so B's `remote_ts` is ready), then **egress** peer on A (A initiates).
+**Deploy order:** apply **AWS (ingress)** first, then **OVH (egress)** so AWS `remote_ts` is ready before OVH initiates.
 
-#### Flow 1 — A admin host → B admin host (new connection)
+#### Flow 1 — OVH admin host → AWS admin host
+
+| Node | Role | What happens |
+|------|------|--------------|
+| **OVH** | `egress` | Forwards, encrypts (initiator side) |
+| **AWS** | `ingress` | Decrypts, forwards to AWS LAN |
 
 ```mermaid
 sequenceDiagram
-  participant H as Host on A admin LAN
-  participant A as Bastion A (egress)
+  participant H as Host on OVH admin LAN
+  participant OVH as OVH bastion (egress)
   participant T as IPsec CHILD SA
-  participant B as Bastion B (ingress)
-  participant J as Host on B admin LAN
+  participant AWS as AWS bastion (ingress)
+  participant J as Host on AWS admin LAN
 
-  Note over A,B: A initiated tunnel; SA local_ts ⊆ A networks, remote_ts ⊆ B admin
+  Note over OVH,AWS: OVH initiated tunnel (egress start_action)
 
-  H->>A: ICMP / TCP (src A_lan, dst B_lan)
-  A->>A: nft NEW accept (A_lan → B_admin)
-  A->>A: NAT bypass (no DMZ masquerade)
-  A->>T: encrypt (src ∈ local_ts, dst ∈ remote_ts)
-  T->>B: ESP decrypt
-  B->>B: nft NEW accept (A_lan → B_lan)
-  B->>J: forward to jumpbox
+  H->>OVH: ICMP / TCP (src OVH_lan, dst AWS_lan)
+  OVH->>OVH: nft NEW accept (OVH_lan → AWS_admin)
+  OVH->>OVH: NAT bypass (no DMZ masquerade)
+  OVH->>T: encrypt (src ∈ OVH local_ts, dst ∈ OVH remote_ts)
+  T->>AWS: ESP decrypt
+  AWS->>AWS: nft NEW accept (OVH_lan → AWS_lan)
+  AWS->>J: forward to jumpbox
 ```
 
-#### Flow 2 — B admin host → A admin host (reverse direction)
+#### Flow 2 — AWS admin host → OVH admin host
 
-Once the CHILD SA is up, B admin hosts can reach A admin hosts. Outbound packets from B use B's `local_ts` (B admin) and A's admin subnet in B's `remote_ts`; return traffic is handled as established/related on both bastions:
+| Node | Role | What happens |
+|------|------|--------------|
+| **AWS** | `ingress` | Encrypts outbound using AWS local_ts / remote_ts |
+| **OVH** | `egress` | Decrypts, forwards to OVH LAN |
 
 ```mermaid
 sequenceDiagram
-  participant J as Host on B admin LAN
-  participant B as Bastion B (ingress)
+  participant J as Host on AWS admin LAN
+  participant AWS as AWS bastion (ingress)
   participant T as IPsec CHILD SA
-  participant A as Bastion A (egress)
-  participant H as Host on A admin LAN
+  participant OVH as OVH bastion (egress)
+  participant H as Host on OVH admin LAN
 
-  J->>B: new flow (src B_lan, dst A_lan)
-  B->>B: IPsec policy (src ∈ B local_ts, dst ∈ A admin in remote_ts)
-  B->>T: ESP encrypt
-  T->>A: decrypt
-  A->>A: nft forward to A_lan
-  A->>H: deliver
+  J->>AWS: new flow (src AWS_lan, dst OVH_lan)
+  AWS->>AWS: IPsec policy (src ∈ AWS local_ts, dst OVH admin in remote_ts)
+  AWS->>T: ESP encrypt
+  T->>OVH: decrypt
+  OVH->>OVH: nft forward to OVH_lan
+  OVH->>H: deliver
   H-->>J: reply (established/related + IPsec)
 ```
 
-Admin ↔ admin reachability is **symmetric** with **egress + ingress** as long as the CHILD SA is established (typically admin ↔ admin selectors).
+Admin ↔ admin reachability is **symmetric** with **OVH egress + AWS ingress** once the CHILD SA is up.
 
-#### Flow 3 — A road-warrior client → B admin host
+#### Flow 3 — OVH road-warrior client → AWS admin host
 
-Requires **both** sides to propose compatible selectors:
+| Node | Role | Selector requirement |
+|------|------|----------------------|
+| **OVH** | `egress` | `local_ts` must include `192.168.111.0/24` (OVH road-warrior pool) |
+| **AWS** | `ingress` | `remote_ts` must include `192.168.111.0/24` via `remote_peer_vpn_subnet` (OVH's pool) |
 
-| Side | Proposal | Role |
-|------|------------|------|
-| A (egress) | `local_ts` includes `192.168.111.0/24` | A_rw may send into tunnel |
-| B (ingress) | `remote_ts` includes `192.168.111.0/24` | Accept traffic sourced from A_rw |
+The client connects to **OVH** via road-warrior VPN (`ikev2-eap-tls`). Cross-site traffic then uses the **site-to-site** tunnel that **OVH (egress)** initiated toward **AWS (ingress)**:
 
 ```mermaid
 flowchart LR
-  RW[A road-warrior client<br/>192.168.111.x]
-  A[Bastion A egress]
-  T[Tunnel]
-  B[Bastion B ingress]
-  J[B admin host]
+  RW[OVH road-warrior client<br/>192.168.111.x]
+  OVH[OVH bastion<br/>direction: egress]
+  T[Site-to-site tunnel<br/>OVH initiates]
+  AWS[AWS bastion<br/>direction: ingress]
+  J[AWS jumpbox<br/>172.20.9.x]
 
-  RW -->|ikev2-eap-tls decrypt| A
-  A -->|local_ts includes A_rw| T
-  T -->|remote_ts on B includes A_rw| B
-  B --> J
+  RW -->|road-warrior VPN to OVH| OVH
+  OVH -->|local_ts includes OVH_rw| T
+  T -->|AWS remote_ts includes OVH_rw| AWS
+  AWS --> J
 ```
 
-If B omits A's road-warrior subnet from `remote_ts`, IKE negotiates **admin-only** selectors even though A's config file lists the VPN pool. Verify with `swanctl --list-sas`, not only the peer conf file.
+If **AWS (ingress)** omits OVH's road-warrior subnet from `remote_ts`, IKE negotiates **admin-only** selectors even though **OVH (egress)** lists `192.168.111.0/24` in `local_ts`. Verify with `swanctl --list-sas` on both nodes.
 
-#### What does not work with egress + ingress alone
+#### What does not work with OVH egress + AWS ingress alone
 
-| Flow | Works? | Why |
-|------|--------|-----|
-| B road-warrior → A admin | **No** | B ingress: `local_ts` is admin only; B_rw is not an egress source |
-| B road-warrior → A road-warrior | **No** | Same; plus shared `vpn_network` is ambiguous across sites |
-| A road-warrior → B road-warrior | **No** | Road-warrior pools not in site-to-site selectors for admin-only SA |
+| Source | Destination | Works? | Why |
+|--------|-------------|--------|-----|
+| AWS road-warrior | OVH admin | **No** | AWS is `ingress` only — `local_ts` is AWS admin; AWS_rw cannot originate site-to-site |
+| AWS road-warrior | OVH road-warrior | **No** | Same; shared `vpn_network` is ambiguous |
+| OVH road-warrior | AWS road-warrior | **No** | Not in site-to-site selectors for admin-only SA |
 
-To allow B's road-warrior clients to reach A, set B's peer to `bidirectional` (or `egress`) so B adds its road-warrior pool to `local_ts`.
+To allow **AWS** road-warrior clients to reach OVH, change the **AWS** peer YAML to `direction: bidirectional` (or `egress`).
 
 ### Reachability matrix
 
-Assuming **A = egress**, **B = ingress**, tunnel up, routes and NAT bypass correct.
+Assuming **OVH = egress**, **AWS = ingress**, tunnel up, routes and NAT bypass correct.
 
 | Source | Destination | Site-to-site | Notes |
 |--------|-------------|--------------|-------|
-| A admin LAN | B admin LAN | Yes | Primary validated use case |
-| B admin LAN | A admin LAN | Yes | Return / reverse new flows via SA + nft |
-| A road-warrior | B admin LAN | Sometimes | Needs A_rw in negotiated `local_ts` and B's `remote_ts` |
-| B road-warrior | A admin LAN | No | B ingress does not egress B_rw |
-| A road-warrior | A admin LAN | Yes | Road-warrior plane (not gateway) |
-| A road-warrior | B road-warrior | No | Shared pool / selector limits |
+| OVH admin LAN | AWS admin LAN | Yes | Primary validated use case |
+| AWS admin LAN | OVH admin LAN | Yes | Reverse flows via established SA |
+| OVH road-warrior | AWS admin LAN | Sometimes | OVH `local_ts` + AWS `remote_ts` must include OVH_rw in negotiated SA |
+| AWS road-warrior | OVH admin LAN | No | AWS is ingress — AWS_rw not in `local_ts` |
+| OVH road-warrior | OVH admin LAN | Yes | Road-warrior plane on OVH (not gateway) |
+| OVH road-warrior | AWS road-warrior | No | Shared pool / selector limits |
 
-| A direction | B direction | Tunnel comes up? | Symmetric admin reachability |
-|-------------|-------------|------------------|------------------------------|
-| egress | ingress | A initiates | Yes |
+| OVH direction | AWS direction | Tunnel comes up? | Symmetric admin reachability |
+|---------------|---------------|------------------|------------------------------|
+| egress | ingress | OVH initiates | Yes |
 | egress | egress | Both try `start` | Yes if SA establishes |
 | ingress | ingress | Neither initiates | **No** |
 | bidirectional | bidirectional | Either initiates | Yes |
