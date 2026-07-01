@@ -245,6 +245,9 @@ pushd /tmp/kcptun
 go build -mod=vendor -ldflags "-s -w" -o /usr/local/bin/kcptun-server ./server
 popd
 rm -rf /tmp/kcptun
+
+# golang-go can orphan networkd-dispatcher; autoremove removes it and drops SSH on EC2.
+apt-mark manual networkd-dispatcher 2>/dev/null || true
 apt-get remove -y golang-go
 apt-get autoremove -y
 
@@ -500,6 +503,7 @@ find /var/log/* -name "*.log" -type f -exec cat /dev/null > {} \;
 cloud-init clean -l
 # Delete cache and temp files
 set +e
+apt-mark manual networkd-dispatcher 2>/dev/null || true
 apt autoremove --purge -y
 apt autoclean -y
 apt clean -y
