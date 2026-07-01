@@ -2,7 +2,7 @@
 
 This document describes the **VPN gateway** subsystem: multi-peer site-to-site IPsec between bastions using StrongSwan swanctl, runtime peer YAML, nftables forward policy, NAT bypass, and policy routing.
 
-Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md). Network forwarding context is in [network-design.md](network-design.md).
+Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md). Network forwarding context is in [network-design.md](network-design.md). **Connectivity, `direction` semantics, and reachability between two peers** are in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
 
 ---
 
@@ -224,6 +224,8 @@ swanctl --initiate --child <name>-net --ike vpn-gateway-<name>
 
 ## Traffic Selectors and Directions
 
+See [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md) for Peer A / Peer B terminology, reachability matrices, and detailed flow diagrams. Summary:
+
 | Direction | `start_action` | Initiator | Forward policy |
 |-----------|----------------|-----------|----------------|
 | `egress` | `start` | This bastion | NEW local → remote; return remote → local |
@@ -236,10 +238,20 @@ For OVH VPN clients to reach AWS admin hosts:
 
 | Side | Selector expansion |
 |------|-------------------|
-| OVH egress | `local_ts` += `config_vpn_subnet` (automatic) |
-| AWS ingress | `remote_ts` += `remote_peer_vpn_subnet` (must be in peer YAML) |
+| OVH egress / bidirectional | `local_ts` += `config_vpn_subnet` (automatic) |
+| AWS ingress / bidirectional | `remote_ts` += `remote_peer_vpn_subnet` (from peer YAML) |
 
 IKE negotiates the **intersection** of both sides' proposals. If AWS `remote_ts` omits `192.168.111.0/24`, the CHILD SA will not carry road-warrior traffic even if OVH proposes it.
+
+#### Shared road-warrior subnet (`vpn_network`)
+
+Bastions often use the same `vpn_network` (e.g. `192.168.111.0/24`) on each site. If `remote_peer_vpn_subnet` in the peer YAML equals the **local** road-warrior pool, it is **omitted from `remote_ts`** on apply (with a warning). Including it would make the site-to-site CHILD SA claim the local VPN pool in `remote_ts`, so replies to local road-warrior clients (notably DNS to the bastion admin IP) would be encrypted into the peer tunnel instead of returned on the road-warrior SA.
+
+With the omission:
+
+- Local road-warrior DNS and admin reachability keep working after bidirectional peers.
+- Cross-site access from local road-warrior clients to **remote admin** hosts still works (`local_ts` still includes the local VPN pool).
+- Cross-site **road-warrior-to-road-warrior** traffic is not supported when both sites share the same `vpn_network` (addresses are ambiguous across the tunnel).
 
 ---
 
@@ -452,6 +464,13 @@ journalctl -u strongswan -n 40 --no-pager
 | Ingress missing `remote_peer_vpn_subnet` | Add to ingress peer YAML, re-apply on AWS |
 | Negotiated SA missing VPN subnet | `swanctl --list-sas` — re-initiate after both sides updated |
 | nft forward missing VPN CIDR | `nft list table inet mycs_vpn_gateway` |
+
+### Issue: road-warrior DNS times out after bidirectional peer
+
+| Cause | Resolution |
+|-------|------------|
+| `remote_ts` included local `vpn_network` via matching `remote_peer_vpn_subnet` | Re-apply peers with current scripts; `remote_peer_vpn_subnet` equal to local pool is auto-omitted from `remote_ts` |
+| DNS works on bastion but not VPN client | `dig @<admin_ip> jumpbox.<zone>.local` from client; confirm `swanctl --list-sas` `remote_ts` no longer lists the local VPN pool |
 
 ### Issue: CHILD_SA TS narrowed vs config file
 

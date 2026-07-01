@@ -159,7 +159,7 @@ Pi-hole container receives environment for admin password, DNS listening, and vo
 
 `powerdns.allowed_subnets` must include both LAN CIDR and road-warrior VPN subnet for clients to query DNS.
 
-For cross-site VPN access to remote internal names, ensure DNS queries can reach the bastion and that forward zones/records exist for required hostnames.
+Cross-site resolution of remote `.local` zones over a VPN gateway tunnel is not automated; use IP addresses, split-horizon DNS outside the bastion, or manual recursor configuration if required.
 
 ---
 
@@ -206,6 +206,7 @@ docker exec pihole pihole status
 | Symptom | Likely cause | Check |
 |---------|--------------|-------|
 | `.local` names fail from VPN | Pi-hole path used instead of authoritative | DNSDist rules; `allowed_subnets` includes VPN CIDR |
+| VPN DNS times out (no response) | Site-to-site `remote_ts` claimed local `vpn_network` | `manage_vpn_gateway_peer apply`; see [vpn-gateway-design.md](vpn-gateway-design.md#shared-road-warrior-subnet-vpn_network) |
 | No DNS at all | DNSDist not bound to admin IP | `ss -ulnp | grep :53`; `powerdns.ns_ip` matches admin interface |
 | Pi-hole not starting | Docker not ready | `configure_docker` log; `docker ps -a` |
 | Records missing | Static records not in config | `/etc/mycs/config.yml` → `powerdns.dns_records` |

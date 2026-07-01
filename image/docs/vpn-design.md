@@ -29,7 +29,7 @@ Exactly **one** road-warrior VPN type is active, selected by `vpn.type` in `/etc
 | `wireguard` | `configure_wireguard` | `wg0` |
 | `ipsec` | `configure_strongswan` | policy-based (xfrm) |
 
-Each script installs protocol-specific configuration, enables the service, and calls `network_apply_roadwarrior_vpn_nft` to add nftables forwarding and NAT rules documented in [network-design.md](network-design.md#road-warrior-vpn-forwarding).
+Each script installs protocol-specific configuration, enables the service, and calls `network_apply_roadwarrior_vpn_nft` to add nftables forwarding and NAT rules documented in [network-design.md](network-design.md#road-warrior-vpn-forwarding). How road-warrior traffic combines with site-to-site peers is in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
 
 Road-warrior VPN and VPN gateway (`vpn_gateway`) are **independent** — both may be enabled simultaneously.
 

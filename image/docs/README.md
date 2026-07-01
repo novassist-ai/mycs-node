@@ -15,7 +15,8 @@ Index of design documents for the `mycs-node/image` module.
 
 | Document | Topics |
 |----------|--------|
-| [network-design.md](network-design.md) | netplan, nftables, NAT, forwarding, Docker bypass, network troubleshooting |
+| [network-design.md](network-design.md) | netplan, nftables, NAT, forwarding, Docker bypass, `direction` summary, network troubleshooting |
+| [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md) | Road-warrior + VPN gateway flows, Peer A/B, `direction`, reachability matrices |
 | [dns-design.md](dns-design.md) | PowerDNS, DNSDist, Pi-hole, internal zones |
 | [vpn-design.md](vpn-design.md) | OpenVPN, WireGuard, StrongSwan IKEv2 road-warrior |
 | [vpn-gateway-design.md](vpn-gateway-design.md) | Site-to-site IPsec peers, OVH↔AWS peering, gateway troubleshooting |
