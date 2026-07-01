@@ -2,7 +2,7 @@
 
 This document describes the **VPN gateway** subsystem: multi-peer site-to-site IPsec between bastions using StrongSwan swanctl, runtime peer YAML, nftables forward policy, NAT bypass, and policy routing.
 
-Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md). Network forwarding context is in [network-design.md](network-design.md). **Connectivity, `direction` semantics, and reachability between two peers** are in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
+Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md). Network forwarding context is in [network-design.md](network-design.md). Additional connectivity scenarios and variants are in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
 
 ---
 
@@ -15,6 +15,11 @@ Road-warrior (client-to-site) VPN is documented in [vpn-design.md](vpn-design.md
 5. [Scripts and Files](#scripts-and-files)
 6. [strongSwan Per-Peer Configuration](#strongswan-per-peer-configuration)
 7. [Traffic Selectors and Directions](#traffic-selectors-and-directions)
+   - [How ingress and egress peers work together](#how-ingress-and-egress-peers-work-together)
+   - [Per-direction behaviour](#per-direction-behaviour)
+   - [Paired egress + ingress: end-to-end flows](#paired-egress--ingress-end-to-end-flows)
+   - [Reachability matrix](#reachability-matrix)
+   - [Road-warrior cross-site access](#road-warrior-cross-site-access)
 8. [nftables and NAT Bypass](#nftables-and-nat-bypass)
 9. [Policy Routing and Admin Routes](#policy-routing-and-admin-routes)
 10. [Runtime Management](#runtime-management)
@@ -224,13 +229,245 @@ swanctl --initiate --child <name>-net --ike vpn-gateway-<name>
 
 ## Traffic Selectors and Directions
 
-See [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md) for Peer A / Peer B terminology, reachability matrices, and detailed flow diagrams. Summary:
+`direction` is set **on each bastion** in that bastion's peer YAML. It is not a single property of the link between two sites. When peering Site **A** (e.g. OVH) with Site **B** (e.g. AWS), each side has its own file describing how **it** connects to the other.
 
-| Direction | `start_action` | Initiator | Forward policy |
-|-----------|----------------|-----------|----------------|
-| `egress` | `start` | This bastion | NEW local → remote; return remote → local |
-| `ingress` | `none` | Remote peer | NEW remote → local; return local → remote |
-| `bidirectional` | `start` | Either | NEW both ways |
+The recommended production pairing is **A = `egress`**, **B = `ingress`**. Together they form one site-to-site tunnel with complementary roles: A initiates and may send new flows toward B; B accepts and may receive new flows from A.
+
+Deeper reachability tables and additional flow variants are in [ipsec-vpn-connectivity-design.md](ipsec-vpn-connectivity-design.md).
+
+### How ingress and egress peers work together
+
+Think of the tunnel as two halves that must agree on **traffic selectors** (`local_ts` / `remote_ts`) and **who may start** the CHILD SA:
+
+```mermaid
+flowchart TB
+  subgraph siteA [Site A — peer direction: egress]
+    A_lan[A admin LAN<br/>172.20.64.128/26]
+    A_rw[A road-warrior clients<br/>192.168.111.0/24]
+    A_bast[Bastion A]
+    A_lan --> A_bast
+    A_rw --> A_bast
+  end
+
+  subgraph siteB [Site B — peer direction: ingress]
+    B_bast[Bastion B]
+    B_lan[B admin LAN<br/>172.20.9.192/26]
+    B_rw[B road-warrior clients<br/>192.168.111.0/24]
+    B_bast --> B_lan
+    B_rw --> B_bast
+  end
+
+  A_bast -->|initiates IKE/CHILD SA<br/>start_action = start| TUN[IPsec tunnel]
+  TUN --> B_bast
+  B_bast -->|start_action = none<br/>waits for A| TUN
+
+  A_bast -.->|local_ts: A_admin + A_rw| TUN
+  TUN -.->|remote_ts on A: B_admin| A_bast
+  B_bast -.->|local_ts: B_admin| TUN
+  TUN -.->|remote_ts on B: A_admin + A_rw| B_bast
+```
+
+| On this bastion | `egress` | `ingress` | `bidirectional` |
+|-----------------|----------|-----------|-------------------|
+| **IKE `start_action`** | `start` — initiates CHILD SA | `none` — waits for remote | `start` — may initiate |
+| **Who brings tunnel up first** | This bastion | Remote bastion | Either side |
+| **nftables NEW forward** | Local → remote | Remote → local | Both |
+| **`local_ts`** | `local_cidr` + local `vpn.subnet` (if road-warrior enabled) | `local_cidr` only | Same as egress |
+| **`remote_ts`** | `remote_cidr` only | `remote_cidr` + `remote_peer_vpn_subnet` | Same as ingress |
+
+**Egress** on A means: A may **start** the tunnel, and **new** flows from A's local networks (admin ± road-warrior) toward B's `remote_cidr` are permitted by nftables and proposed in `local_ts`.
+
+**Ingress** on B means: B **does not** start the tunnel; it accepts IKE from A. **New** flows from B's peer networks (admin ± their road-warrior subnet) toward B's `local_cidr` are permitted and proposed in `remote_ts`.
+
+**Bidirectional** on a bastion combines both: it may initiate **and** accept new flows in both directions for that peer.
+
+### Per-direction behaviour
+
+#### Egress (initiator side)
+
+```mermaid
+flowchart LR
+  subgraph local [Local networks on egress bastion]
+    LAN[local_cidr<br/>admin subnet]
+    RW[vpn.subnet<br/>road-warrior pool]
+  end
+
+  subgraph bastion [Egress bastion]
+    SS[strongSwan<br/>start_action = start]
+    NFT[nft mycs_vpn_gateway<br/>NEW: local → remote<br/>RELATED: remote → local]
+  end
+
+  subgraph remote [Peer remote networks]
+    RLAN[remote_cidr<br/>peer admin subnet]
+  end
+
+  LAN --> NFT
+  RW --> NFT
+  NFT --> SS
+  SS -->|ESP local_ts → remote_ts| RLAN
+```
+
+- **Initiation:** `manage_vpn_gateway_peer apply` runs `swanctl --initiate` for egress peers.
+- **Selectors:** `local_ts` = `local_cidr` (+ local road-warrior subnet when `vpn:` is enabled). `remote_ts` = `remote_cidr` only.
+- **Forwarding:** nft allows **new** connections from each egress source CIDR to `remote_cidr`, and **established/related** return traffic from `remote_cidr` back to `local_cidr` (and road-warrior pool for return).
+
+#### Ingress (responder side)
+
+```mermaid
+flowchart LR
+  subgraph remote [Peer remote networks]
+    RLAN[remote_cidr<br/>peer admin subnet]
+    RRW[remote_peer_vpn_subnet<br/>peer road-warrior pool]
+  end
+
+  subgraph bastion [Ingress bastion]
+    SS[strongSwan<br/>start_action = none]
+    NFT[nft mycs_vpn_gateway<br/>NEW: remote → local<br/>RELATED: local → remote]
+  end
+
+  subgraph local [Local networks on ingress bastion]
+    LAN[local_cidr<br/>admin subnet]
+  end
+
+  RLAN -->|ESP remote_ts → local_ts| SS
+  RRW --> SS
+  SS --> NFT
+  NFT --> LAN
+```
+
+- **Initiation:** does not auto-initiate; waits for the egress (or bidirectional) peer.
+- **Selectors:** `local_ts` = `local_cidr` only. `remote_ts` = `remote_cidr` + `remote_peer_vpn_subnet` (when set).
+- **Forwarding:** nft allows **new** connections from each remote source CIDR to `local_cidr`, and **established/related** return from `local_cidr` to those remote CIDRs.
+- **Important:** ingress does **not** add the **local** road-warrior pool to `local_ts`. Local VPN clients on an ingress-only bastion cannot originate site-to-site flows to the peer without changing direction to `bidirectional` (or `egress`).
+
+#### Bidirectional (either side may initiate)
+
+```mermaid
+flowchart TB
+  subgraph A [Bidirectional bastion]
+    A_src[local_cidr + vpn.subnet]
+    A_dst[remote_cidr + remote_peer_vpn_subnet]
+    A_nft[nft: NEW both ways<br/>+ established/related both ways]
+    A_src <--> A_nft
+    A_nft <--> A_dst
+  end
+
+  subgraph B [Remote peer]
+    B_bast[Remote bastion]
+  end
+
+  A_nft <-->|either side may initiate| B_bast
+```
+
+- Combines egress initiation with ingress acceptance on the **same** peer entry.
+- Use when both sites must initiate tunnels, or when local road-warrior clients on **both** sides need to reach the remote admin LAN.
+- Both sides `bidirectional` is valid but may produce duplicate CHILD_SA log lines if both initiate; usually harmless if an SA is already up.
+
+### Paired egress + ingress: end-to-end flows
+
+Example: OVH = **egress**, AWS = **ingress**. Admin subnets `172.20.64.128/26` ↔ `172.20.9.192/26`, shared road-warrior pool `192.168.111.0/24`.
+
+**Deploy order:** apply **ingress** peer on B first (so B's `remote_ts` is ready), then **egress** peer on A (A initiates).
+
+#### Flow 1 — A admin host → B admin host (new connection)
+
+```mermaid
+sequenceDiagram
+  participant H as Host on A admin LAN
+  participant A as Bastion A (egress)
+  participant T as IPsec CHILD SA
+  participant B as Bastion B (ingress)
+  participant J as Host on B admin LAN
+
+  Note over A,B: A initiated tunnel; SA local_ts ⊆ A networks, remote_ts ⊆ B admin
+
+  H->>A: ICMP / TCP (src A_lan, dst B_lan)
+  A->>A: nft NEW accept (A_lan → B_admin)
+  A->>A: NAT bypass (no DMZ masquerade)
+  A->>T: encrypt (src ∈ local_ts, dst ∈ remote_ts)
+  T->>B: ESP decrypt
+  B->>B: nft NEW accept (A_lan → B_lan)
+  B->>J: forward to jumpbox
+```
+
+#### Flow 2 — B admin host → A admin host (reverse direction)
+
+Once the CHILD SA is up, B admin hosts can reach A admin hosts. Outbound packets from B use B's `local_ts` (B admin) and A's admin subnet in B's `remote_ts`; return traffic is handled as established/related on both bastions:
+
+```mermaid
+sequenceDiagram
+  participant J as Host on B admin LAN
+  participant B as Bastion B (ingress)
+  participant T as IPsec CHILD SA
+  participant A as Bastion A (egress)
+  participant H as Host on A admin LAN
+
+  J->>B: new flow (src B_lan, dst A_lan)
+  B->>B: IPsec policy (src ∈ B local_ts, dst ∈ A admin in remote_ts)
+  B->>T: ESP encrypt
+  T->>A: decrypt
+  A->>A: nft forward to A_lan
+  A->>H: deliver
+  H-->>J: reply (established/related + IPsec)
+```
+
+Admin ↔ admin reachability is **symmetric** with **egress + ingress** as long as the CHILD SA is established (typically admin ↔ admin selectors).
+
+#### Flow 3 — A road-warrior client → B admin host
+
+Requires **both** sides to propose compatible selectors:
+
+| Side | Proposal | Role |
+|------|------------|------|
+| A (egress) | `local_ts` includes `192.168.111.0/24` | A_rw may send into tunnel |
+| B (ingress) | `remote_ts` includes `192.168.111.0/24` | Accept traffic sourced from A_rw |
+
+```mermaid
+flowchart LR
+  RW[A road-warrior client<br/>192.168.111.x]
+  A[Bastion A egress]
+  T[Tunnel]
+  B[Bastion B ingress]
+  J[B admin host]
+
+  RW -->|ikev2-eap-tls decrypt| A
+  A -->|local_ts includes A_rw| T
+  T -->|remote_ts on B includes A_rw| B
+  B --> J
+```
+
+If B omits A's road-warrior subnet from `remote_ts`, IKE negotiates **admin-only** selectors even though A's config file lists the VPN pool. Verify with `swanctl --list-sas`, not only the peer conf file.
+
+#### What does not work with egress + ingress alone
+
+| Flow | Works? | Why |
+|------|--------|-----|
+| B road-warrior → A admin | **No** | B ingress: `local_ts` is admin only; B_rw is not an egress source |
+| B road-warrior → A road-warrior | **No** | Same; plus shared `vpn_network` is ambiguous across sites |
+| A road-warrior → B road-warrior | **No** | Road-warrior pools not in site-to-site selectors for admin-only SA |
+
+To allow B's road-warrior clients to reach A, set B's peer to `bidirectional` (or `egress`) so B adds its road-warrior pool to `local_ts`.
+
+### Reachability matrix
+
+Assuming **A = egress**, **B = ingress**, tunnel up, routes and NAT bypass correct.
+
+| Source | Destination | Site-to-site | Notes |
+|--------|-------------|--------------|-------|
+| A admin LAN | B admin LAN | Yes | Primary validated use case |
+| B admin LAN | A admin LAN | Yes | Return / reverse new flows via SA + nft |
+| A road-warrior | B admin LAN | Sometimes | Needs A_rw in negotiated `local_ts` and B's `remote_ts` |
+| B road-warrior | A admin LAN | No | B ingress does not egress B_rw |
+| A road-warrior | A admin LAN | Yes | Road-warrior plane (not gateway) |
+| A road-warrior | B road-warrior | No | Shared pool / selector limits |
+
+| A direction | B direction | Tunnel comes up? | Symmetric admin reachability |
+|-------------|-------------|------------------|------------------------------|
+| egress | ingress | A initiates | Yes |
+| egress | egress | Both try `start` | Yes if SA establishes |
+| ingress | ingress | Neither initiates | **No** |
+| bidirectional | bidirectional | Either initiates | Yes |
+| egress | bidirectional | Either | Yes |
 
 ### Road-warrior cross-site access
 
