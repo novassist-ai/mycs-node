@@ -62,7 +62,8 @@ module "bootstrap" {
     "user2|P@ssw0rd2"
   ]
 
-  vpn_type = "ipsec"
+  vpn_type               = "ipsec"
+  vpn_network            = "192.168.111.0/24"
 
   # vpn_type          = "openvpn"
   # ovpn_service_port = "2295"

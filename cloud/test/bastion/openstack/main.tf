@@ -62,12 +62,13 @@ module "bootstrap" {
     "user2|P@ssw0rd2"
   ]
 
-  vpn_type = "ipsec"
-
+  vpn_type               = "ipsec"
+  vpn_network            = "192.168.112.0/24"
   vpn_tunnel_all_traffic = "yes"
 
   # Site-to-site IPsec gateway to AWS inceptor (OVH UK1 -> AWS us-east-1)
   vpn_gateway_enabled    = true
+  # vpn_gateway_nat        = true
   vpn_gateway_peer_cidrs = ["172.20.9.192/26"]
 
   vpn_gateway_peer_export_path = "${path.module}/.${var.region}/ovh-${var.region}-peer.yml"

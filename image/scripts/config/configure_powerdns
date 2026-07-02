@@ -200,6 +200,9 @@ newServer({address='${config_powerdns_ns_ip}:5300', pool='recursor'})
 newServer({address='127.0.0.1:5300', pool='auth'})
 newServer({address='127.0.0.1:5301', pool='pihole'})
 
+-- BEGIN VPN gateway peer DNS (managed by manage_vpn_gateway_peer)
+-- END VPN gateway peer DNS
+
 ---EOF
 
 # LAN zones: send to recursor before Pi-Hole (VPN clients cannot resolve .local via Pi-Hole).

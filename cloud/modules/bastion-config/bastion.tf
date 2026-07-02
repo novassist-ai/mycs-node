@@ -197,6 +197,7 @@ vpn_gateway:
   protocol: '${var.vpn_gateway_protocol}'
   local_id: '${var.bastion_fqdn}'
   local_cidr: '${var.bastion_admin_subnet_cidr}'
+  nat: ${var.vpn_gateway_nat ? "yes" : "no"}
 
 CONFIG
   index_html = templatefile(

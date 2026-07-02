@@ -83,7 +83,7 @@ Ephemeral directories (not committed): `.download/` (mycs-node zip, API key), `.
 |----------|-------------|
 | [docs/build-design.md](docs/build-design.md) | Packer flow, build scripts, `install_packages`, CI, build troubleshooting |
 | [docs/runtime-bootstrap-design.md](docs/runtime-bootstrap-design.md) | `init_instance`, configure script order, idempotency |
-| [docs/network-design.md](docs/network-design.md) | Interfaces, nftables, routing, Docker bypass, `direction` summary, network troubleshooting |
+| [docs/network-design.md](docs/network-design.md) | Interfaces, nftables, routing, Docker bypass, VPN gateway NAT, network troubleshooting |
 | [docs/ipsec-vpn-connectivity-design.md](docs/ipsec-vpn-connectivity-design.md) | IPsec road-warrior + VPN gateway connectivity, Peer A/B, reachability |
 | [docs/dns-design.md](docs/dns-design.md) | PowerDNS, DNSDist, Pi-hole |
 | [docs/vpn-design.md](docs/vpn-design.md) | Road-warrior VPN (OpenVPN, WireGuard, StrongSwan IKEv2) |

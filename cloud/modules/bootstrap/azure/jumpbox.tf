@@ -17,6 +17,7 @@ locals {
       ? format("%s:%s", local.jumpbox_dns, local.jumpbox_ip) 
       : ""
   )
+  jumpbox_dns_server = local.bastion_admin_itf_ip
 }
 
 resource "azurerm_linux_virtual_machine" "jumpbox" {
@@ -62,6 +63,13 @@ data "cloudinit_config" "jumpbox-cloudinit" {
 #cloud-config
 
 write_files:
+- path: /etc/systemd/resolved.conf.d/bastion-dns.conf
+  content: |
+    [Resolve]
+    MulticastDNS=no
+    LLMNR=no
+    DNS=${local.jumpbox_dns_server}
+    Domains=~.
 - encoding: b64
   content: ${base64encode(templatefile(
     "${path.module}/scripts/mount-volume.sh",
@@ -75,6 +83,7 @@ write_files:
   permissions: '0744'
 
 runcmd: 
+- systemctl restart systemd-resolved
 
 # Install Docker
 - |

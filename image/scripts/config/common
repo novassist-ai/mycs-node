@@ -603,6 +603,7 @@ fi
 : "${config_vpn_gateway_ipsec_integrity:=sha256}"
 : "${config_vpn_gateway_ipsec_dh_group:=14}"
 : "${config_vpn_gateway_ipsec_lifetime:=43200}"
+: "${config_vpn_gateway_nat:=no}"
 : "${config_vpn_gateway_nat_t:=yes}"
 : "${config_vpn_gateway_remote_ca:=upstream_ca.pem}"
 : "${config_vpn_gateway_local_cidr:=}"

@@ -39,6 +39,7 @@ locals {
     ? format("%s:%s", local.jumpbox_dns, local.jumpbox_ip)
     : ""
   )
+  jumpbox_dns_server = local.bastion_admin_itf_ip
 }
 
 data "openstack_compute_flavor_v2" "jumpbox" {
@@ -105,6 +106,13 @@ write_files:
           match:
             macaddress: ${lower(openstack_networking_port_v2.jumpbox[0].mac_address)}
           set-name: jumpbox0
+- path: /etc/systemd/resolved.conf.d/bastion-dns.conf
+  content: |
+    [Resolve]
+    MulticastDNS=no
+    LLMNR=no
+    DNS=${local.jumpbox_dns_server}
+    Domains=~.
 - encoding: b64
   content: ${base64encode(templatefile(
   "${path.module}/scripts/mount-volume.sh",
@@ -119,6 +127,7 @@ write_files:
 
 runcmd:
 - netplan apply
+- systemctl restart systemd-resolved
 
 # Install Docker
 - |

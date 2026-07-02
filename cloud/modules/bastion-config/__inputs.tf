@@ -231,6 +231,12 @@ variable "vpn_gateway_protocol" {
   default = "ipsec"
 }
 
+variable "vpn_gateway_nat" {
+  type        = bool
+  default     = false
+  description = "When true, peer traffic SNATs to the bastion admin IP unless a peer YAML overrides nat. Independent of bastion_as_nat."
+}
+
 #
 # Optional VPN gateway peer export for remote sites (manage_vpn_gateway_peer).
 # When vpn_gateway_peer_export_path is set, writes this bastion's peer details

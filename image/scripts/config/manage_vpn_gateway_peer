@@ -36,21 +36,40 @@ Commands:
   list               List configured peers
   apply              Regenerate swanctl, nftables, and reload strongSwan
 
-Peer YAML (required keys: name, host, remote_cidr, direction, auth):
+Peer YAML (required keys: name, host, remote_cidr, auth):
 
   name: aws-us-east-1
   host: test-us-east-1.aws.NnovAassist.ai
   remote_id: test-us-east-1.aws.NnovAassist.ai
   local_cidr: 172.20.64.128/26   # optional if vpn_gateway.local_cidr is set in config.yml
   remote_cidr: 172.20.9.192/26
-  direction: egress          # egress | ingress | bidirectional
   auth: cert                 # cert | psk
 
-For egress and bidirectional peers, road-warrior clients (vpn.subnet) may also
-reach remote_cidr through the gateway, in addition to local_cidr hosts.
+Symmetric peering (default): omit NAT fields. Both sides reach each other's admin
+(and road-warrior pools when configured) with full traffic selectors.
 
-For ingress and bidirectional peers, set remote_peer_vpn_subnet to the remote
-bastion's road-warrior subnet so encrypted traffic from those clients is accepted:
+Global default: vpn_gateway.nat in /etc/mycs/config.yml (from Terraform bootstrap).
+Per-peer override: set nat: yes or nat: no in peer YAML.
+
+Asymmetric NAT peering:
+
+  # On the bastion that SNATs toward this peer (outbound only):
+  nat: yes
+  nat_source: 172.20.64.189     # optional; defaults to server.admin_itf_ip
+
+  # On the receiving bastion when the remote site uses NAT:
+  remote_nat: yes
+  remote_nat_source: 172.20.64.189   # remote gateway IP (from peer export nat_source)
+
+Cross-site DNS (from peer export): remote_dns_server and remote_local_zone add a
+DNSDist suffix rule so this bastion forwards the peer's .local zone to the remote
+admin DNS (port 53). Applied on add/apply; reloads dnsdist.
+
+  remote_dns_server: 172.20.9.253:53
+  remote_local_zone: test-us-east-1.local
+
+Road-warrior cross-site (symmetric peers): set remote_peer_vpn_subnet to the
+remote bastion's vpn.subnet when road-warrior VPN is enabled on both sides.
 
   remote_peer_vpn_subnet: 192.168.111.0/24
 

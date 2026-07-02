@@ -86,6 +86,7 @@ provisioner "file" {
   destination = "/tmp/download"
 }
 provisioner "shell" {
+  expect_disconnect = false
   inline = [
     "chmod +x /tmp/inceptor-scripts/*",
     "/tmp/inceptor-scripts/install_packages"
@@ -315,6 +316,8 @@ cd /path/to/mycs-node/image
 ### Inspecting a failed Packer VM
 
 If Packer leaves a builder instance running, SSH to it (when possible) and inspect `/var/log/cloud-init-output.log` and the Packer shell provisioner output.
+
+Shell provisioners use `expect_disconnect = false` so an unexpected SSH drop during `install_packages` fails the build instead of snapshotting a partial image. `install_packages` also runs `apt-mark manual networkd-dispatcher` before `apt autoremove` so golang cleanup does not remove that package and drop SSH on EC2.
 
 ---
 

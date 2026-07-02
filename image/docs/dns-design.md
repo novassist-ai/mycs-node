@@ -153,13 +153,16 @@ Pi-hole container receives environment for admin password, DNS listening, and vo
 | Client type | DNS server | Notes |
 |-------------|------------|-------|
 | LAN hosts | Bastion admin IP | Via DHCP option or static config from Terraform |
+| Jumpbox VMs | Bastion admin IP | `systemd-resolved` drop-in routes `*.local` to bastion DNS (see below) |
 | OpenVPN clients | Pushed in `server.conf` | From PowerDNS or `vpn.dns_servers` |
 | IPsec clients | In `.mobileconfig` / strongSwan | From PowerDNS config |
 | WireGuard clients | Client `DNS =` setting | Set in generated client config |
 
+Jumpboxes use Ubuntu `systemd-resolved`, which treats `*.local` as mDNS by default. Bootstrap cloud-init writes `/etc/systemd/resolved.conf.d/bastion-dns.conf` with `MulticastDNS=no`, `LLMNR=no`, `DNS=<bastion admin IP>`, and `Domains=~.` so `ping`, `getent`, and other libc resolvers use bastion DNSDist (including cross-site peer zones).
+
 `powerdns.allowed_subnets` must include both LAN CIDR and road-warrior VPN subnet for clients to query DNS.
 
-Cross-site resolution of remote `.local` zones over a VPN gateway tunnel is not automated; use IP addresses, split-horizon DNS outside the bastion, or manual recursor configuration if required.
+Cross-site resolution of remote `.local` zones over a VPN gateway tunnel is configured via peer YAML (`remote_dns_server`, `remote_local_zone`) and applied by `manage_vpn_gateway_peer` into DNSDist. Re-run `apply` after manual edits to the managed block.
 
 ---
 
@@ -206,6 +209,7 @@ docker exec pihole pihole status
 | Symptom | Likely cause | Check |
 |---------|--------------|-------|
 | `.local` names fail from VPN | Pi-hole path used instead of authoritative | DNSDist rules; `allowed_subnets` includes VPN CIDR |
+| `.local` names fail from jumpbox (`ping`, `getent`) | `systemd-resolved` mDNS handling for `.local` | Jumpbox `resolved.conf.d/bastion-dns.conf`; `resolvectl query <name>` |
 | VPN DNS times out (no response) | Site-to-site `remote_ts` claimed local `vpn_network` | `manage_vpn_gateway_peer apply`; see [vpn-gateway-design.md](vpn-gateway-design.md#shared-road-warrior-subnet-vpn_network) |
 | No DNS at all | DNSDist not bound to admin IP | `ss -ulnp | grep :53`; `powerdns.ns_ip` matches admin interface |
 | Pi-hole not starting | Docker not ready | `configure_docker` log; `docker ps -a` |

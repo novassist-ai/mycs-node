@@ -120,6 +120,7 @@ module "config" {
 
   vpn_gateway_enabled  = var.vpn_gateway_enabled
   vpn_gateway_protocol = var.vpn_gateway_protocol
+  vpn_gateway_nat      = var.vpn_gateway_nat
 
   vpn_gateway_peer_export_path = var.vpn_gateway_peer_export_path
   bastion_admin_subnet_cidr = (

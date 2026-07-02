@@ -253,6 +253,12 @@ variable "vpn_gateway_protocol" {
   default = "ipsec"
 }
 
+variable "vpn_gateway_nat" {
+  type        = bool
+  default     = false
+  description = "Default SNAT behaviour for VPN gateway peers on this bastion (overridable per peer YAML)."
+}
+
 variable "vpn_gateway_peer_cidrs" {
   type        = list(string)
   default     = []

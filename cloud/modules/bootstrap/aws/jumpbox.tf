@@ -18,6 +18,7 @@ locals {
       ? format("%s:%s", local.jumpbox_dns, aws_instance.jumpbox.0.private_ip) 
       : ""
   )
+  jumpbox_dns_server = local.bastion_admin_itf_ip
 }
 
 resource "aws_instance" "jumpbox" {
@@ -49,6 +50,13 @@ resource "aws_instance" "jumpbox" {
 #cloud-config
 
 write_files:
+- path: /etc/systemd/resolved.conf.d/bastion-dns.conf
+  content: |
+    [Resolve]
+    MulticastDNS=no
+    LLMNR=no
+    DNS=${local.jumpbox_dns_server}
+    Domains=~.
 - encoding: b64
   content: ${base64encode(templatefile(
     "${path.module}/scripts/mount-volume.sh",
@@ -62,6 +70,7 @@ write_files:
   permissions: '0744'
 
 runcmd: 
+- systemctl restart systemd-resolved
 
 # Install Docker
 - |
