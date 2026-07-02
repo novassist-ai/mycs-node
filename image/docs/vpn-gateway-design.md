@@ -317,6 +317,16 @@ sudo manage_vpn_gateway_peer apply
 
 `apply` regenerates swanctl conf, nftables, postrouting SNAT/bypass, **DNSDist peer zone rules**, reloads strongSwan, restarts dnsdist, and **initiates all peers**.
 
+### Bilateral peer bootstrap
+
+Cross-site DNS depends on **both** bastions having the peer configured and IPsec up. Recommended order:
+
+1. `manage_vpn_gateway_peer add <peer.yaml>` on bastion A
+2. `manage_vpn_gateway_peer add <peer.yaml>` on bastion B
+3. If peer-zone lookups still fail on either side, run `manage_vpn_gateway_peer apply` on both
+
+Peer DNS downstreams use `healthCheckMode='up'`. A background recheck (`/var/log/vpn-gateway-dnsdist-recheck.log`) restarts dnsdist when the remote resolver becomes reachable after the other site is configured.
+
 ---
 
 ## Terraform peer export
@@ -332,7 +342,7 @@ remote_dns_server: <exporter admin IP>:53
 remote_local_zone: test-us-east-1.local
 ```
 
-On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block) and restarts `dnsdist`. Rules must appear **before** local zone and recursion actions.
+On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block). Each peer downstream uses `healthCheckMode='up'`. dnsdist is restarted after strongSwan and peer initiation, and a background recheck retries when the remote site comes online later. Rules must appear **before** local zone and recursion actions.
 
 On the **exporting** site: `vpn_gateway.nat` is set via Terraform; uncomment `nat:` in peer YAML only to override. `nat_source` defaults to the admin interface. On the **importing** site: uncomment `remote_nat: yes` when the remote uses NAT; `remote_nat_source`, `remote_dns_server`, and `remote_local_zone` are provided by the export.
 
@@ -346,6 +356,7 @@ On the **exporting** site: `vpn_gateway.nat` is set via Terraform; uncomment `na
 | OVH→AWS works, AWS→OVH LAN blocked | Expected with asymmetric NAT |
 | RW cross-site fails | `swanctl --list-sas`; `remote_peer_vpn_subnet`; shared-pool guard |
 | Local RW DNS timeout | `remote_ts` must not claim local `vpn.subnet` via matching `remote_peer_vpn_subnet` |
+| Peer `.local` timeout via bastion DNS (rules present in `dnsdist.conf`) | Remote peer not up when first side was added; run `apply` on both bastions; check `journalctl -u dnsdist` for peer backend status |
 | Peer `.local` NXDOMAIN via bastion DNS | `manage_vpn_gateway_peer apply`; check managed block in `/etc/dnsdist/dnsdist.conf`; `systemctl status dnsdist` |
 
 ```bash

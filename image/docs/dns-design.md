@@ -162,7 +162,7 @@ Jumpboxes use Ubuntu `systemd-resolved`, which treats `*.local` as mDNS by defau
 
 `powerdns.allowed_subnets` must include both LAN CIDR and road-warrior VPN subnet for clients to query DNS.
 
-Cross-site resolution of remote `.local` zones over a VPN gateway tunnel is configured via peer YAML (`remote_dns_server`, `remote_local_zone`) and applied by `manage_vpn_gateway_peer` into DNSDist. Re-run `apply` after manual edits to the managed block.
+Cross-site resolution of remote `.local` zones over a VPN gateway tunnel is configured via peer YAML (`remote_dns_server`, `remote_local_zone`) and applied by `manage_vpn_gateway_peer` into DNSDist. Peer downstreams use `healthCheckMode='up'`; a background recheck restarts dnsdist when the remote site is added second. See [vpn-gateway-design.md](vpn-gateway-design.md#bilateral-peer-bootstrap) for bilateral setup order.
 
 ---
 

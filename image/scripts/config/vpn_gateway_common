@@ -13,6 +13,8 @@ VPN_GATEWAY_NFT_CONF=${VPN_GATEWAY_NFT_CONF:-/data/network/etc/vpn-gateway-peers
 VPN_GATEWAY_DNSDIST_CONF=${VPN_GATEWAY_DNSDIST_CONF:-/etc/dnsdist/dnsdist.conf}
 VPN_GATEWAY_DNSDIST_BEGIN='-- BEGIN VPN gateway peer DNS (managed by manage_vpn_gateway_peer)'
 VPN_GATEWAY_DNSDIST_END='-- END VPN gateway peer DNS'
+VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE=${VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE:-/var/run/vpn-gateway-dnsdist-recheck.pid}
+VPN_GATEWAY_DNSDIST_RECHECK_LOG=${VPN_GATEWAY_DNSDIST_RECHECK_LOG:-/var/log/vpn-gateway-dnsdist-recheck.log}
 
 function vpn_gateway_peers_configured {
     network_vpn_gateway_enabled && return 0
@@ -807,6 +809,154 @@ function vpn_gateway_restart_dnsdist {
     fi
     # dnsdist does not re-execute dnsdist.conf on reload; peer pools need a restart.
     systemctl restart dnsdist.service
+    local attempt
+    for attempt in $(seq 1 30); do
+        if systemctl is-active dnsdist.service >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "WARNING! dnsdist did not become active after restart" >&2
+    journalctl -u dnsdist -n 20 --no-pager >&2 || true
+    return 1
+}
+
+function vpn_gateway_peer_dns_local_works {
+    local local_dns=$1 qname=$2
+
+    host -t A "$qname" "$local_dns" 2>/dev/null | grep -q 'has address'
+}
+
+function vpn_gateway_peer_dns_remote_reachable {
+    local dns_server=$1 zone=$2
+    local dns_host=${dns_server%:*}
+    local dns_port=${dns_server#*:}
+
+    [[ $dns_port == "$dns_server" ]] && dns_port=53
+    host -t SOA "$zone" "$dns_host" 2>/dev/null | grep -q 'has SOA record'
+}
+
+function vpn_gateway_peer_dns_zones_configured {
+    compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        || compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1
+}
+
+function vpn_gateway_all_peer_zones_resolve_locally {
+    local peer_file zone qname local_dns
+
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+
+    local_dns=${config_powerdns_ns_ip:-${config_server_admin_itf_ip:-}}
+    [[ -n $local_dns ]] || return 1
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        if [[ -z ${peer_remote_dns_server:-} || -z ${peer_remote_local_zone:-} ]]; then
+            continue
+        fi
+        for zone in $peer_remote_local_zone; do
+            qname="ns1.${zone}."
+            if ! vpn_gateway_peer_dns_local_works "$local_dns" "$qname"; then
+                shopt -u nullglob
+                return 1
+            fi
+        done
+    done
+    shopt -u nullglob
+    return 0
+}
+
+function vpn_gateway_any_peer_dns_remote_reachable {
+    local peer_file zone
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        if [[ -z ${peer_remote_dns_server:-} || -z ${peer_remote_local_zone:-} ]]; then
+            continue
+        fi
+        for zone in $peer_remote_local_zone; do
+            if vpn_gateway_peer_dns_remote_reachable "$peer_remote_dns_server" "$zone"; then
+                shopt -u nullglob
+                return 0
+            fi
+        done
+    done
+    shopt -u nullglob
+    return 1
+}
+
+function vpn_gateway_verify_peer_dnsdist {
+    if vpn_gateway_all_peer_zones_resolve_locally; then
+        return 0
+    fi
+    if vpn_gateway_any_peer_dns_remote_reachable; then
+        echo "WARNING! peer DNS is reachable over the tunnel but not via local dnsdist; retrying restart" >&2
+        systemctl restart dnsdist.service
+        sleep 2
+    fi
+}
+
+function vpn_gateway_schedule_dnsdist_peer_recheck {
+    local recheck_pid
+
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+    if vpn_gateway_all_peer_zones_resolve_locally; then
+        return 0
+    fi
+
+    if [[ -f $VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE ]]; then
+        recheck_pid=$(cat "$VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE" 2>/dev/null || true)
+        if [[ -n $recheck_pid ]] && kill -0 "$recheck_pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    nohup bash -c '
+        source /usr/local/lib/cloud-inceptor/common
+        source /usr/local/lib/cloud-inceptor/vpn_gateway_common
+        attempt=0
+        while [[ $attempt -lt 24 ]]; do
+            attempt=$((attempt + 1))
+            sleep 5
+            if ! vpn_gateway_dnsdist_available; then
+                exit 0
+            fi
+            if vpn_gateway_all_peer_zones_resolve_locally; then
+                exit 0
+            fi
+            if vpn_gateway_any_peer_dns_remote_reachable; then
+                systemctl restart dnsdist.service
+                sleep 2
+                if vpn_gateway_all_peer_zones_resolve_locally; then
+                    exit 0
+                fi
+            fi
+        done
+        echo "NOTE: cross-site DNS is still not ready; run manage_vpn_gateway_peer apply on both bastions" >&2
+    ' >>"$VPN_GATEWAY_DNSDIST_RECHECK_LOG" 2>&1 &
+    echo $! >"$VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE"
+}
+
+function vpn_gateway_finish_dnsdist_apply {
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    # Peer DNS backends are reached over the IPsec tunnel; restart only after
+    # strongSwan has reloaded and child SAs are up.
+    sleep 2
+    echo "Restarting dnsdist for VPN gateway peer DNS rules..."
+    vpn_gateway_restart_dnsdist || return 1
+    vpn_gateway_verify_peer_dnsdist
+    vpn_gateway_schedule_dnsdist_peer_recheck
 }
 
 function vpn_gateway_regenerate_dnsdist_peer_rules {
@@ -826,7 +976,7 @@ function vpn_gateway_regenerate_dnsdist_peer_rules {
         safe_name=$(vpn_gateway_sanitize_name "$peer_name")
         pool="recursor_${safe_name}"
         {
-            echo "newServer({address='${peer_remote_dns_server}', pool='${pool}'})"
+            echo "newServer({address='${peer_remote_dns_server}', pool='${pool}', healthCheckMode='up'})"
             echo "smn = newSuffixMatchNode()"
             for zone in $peer_remote_local_zone; do
                 echo "smn:add('${zone}')"
@@ -893,8 +1043,6 @@ function vpn_gateway_regenerate_dnsdist_peer_rules {
     ' "$VPN_GATEWAY_DNSDIST_CONF" > "$tmp"
     install -m 0644 "$tmp" "$VPN_GATEWAY_DNSDIST_CONF"
     rm -f "$rules_file" "$tmp"
-
-    vpn_gateway_restart_dnsdist
 }
 
 function vpn_gateway_apply_all {
@@ -907,6 +1055,7 @@ function vpn_gateway_apply_all {
         network_nft_save 2>/dev/null || true
         vpn_gateway_regenerate_dnsdist_peer_rules || return 1
         vpn_gateway_sync_and_load
+        vpn_gateway_finish_dnsdist_apply
         return 0
     fi
 
@@ -919,6 +1068,7 @@ function vpn_gateway_apply_all {
     vpn_gateway_ensure_policy_routing
     vpn_gateway_remove_admin_supernet_routes
     vpn_gateway_initiate_all_peers
+    vpn_gateway_finish_dnsdist_apply
 }
 
 function vpn_gateway_list_peers {

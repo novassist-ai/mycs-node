@@ -63,7 +63,15 @@ Asymmetric NAT peering:
 
 Cross-site DNS (from peer export): remote_dns_server and remote_local_zone add a
 DNSDist suffix rule so this bastion forwards the peer's .local zone to the remote
-admin DNS (port 53). Applied on add/apply; restarts dnsdist.
+admin DNS (port 53). Applied on add/apply; restarts dnsdist. Peer downstreams
+use healthCheckMode='up'. A background recheck restarts dnsdist when the remote
+site comes online after the first bastion was configured.
+
+Bilateral peer setup (two sites):
+
+  1. manage_vpn_gateway_peer add <peer.yaml>   # on bastion A
+  2. manage_vpn_gateway_peer add <peer.yaml>   # on bastion B
+  3. manage_vpn_gateway_peer apply             # on both if cross-site DNS still fails
 
   remote_dns_server: 172.20.9.253:53
   remote_local_zone: test-us-east-1.local
