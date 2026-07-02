@@ -327,7 +327,7 @@ variable "deploy_jumpbox" {
 }
 
 variable "jumpbox_image_name" {
-  default = "Ubuntu 24.04"
+  default = "Ubuntu 26.04"
 }
 
 variable "jumpbox_flavor" {
