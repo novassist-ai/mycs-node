@@ -63,7 +63,7 @@ Asymmetric NAT peering:
 
 Cross-site DNS (from peer export): remote_dns_server and remote_local_zone add a
 DNSDist suffix rule so this bastion forwards the peer's .local zone to the remote
-admin DNS (port 53). Applied on add/apply; reloads dnsdist.
+admin DNS (port 53). Applied on add/apply; restarts dnsdist.
 
   remote_dns_server: 172.20.9.253:53
   remote_local_zone: test-us-east-1.local

@@ -315,7 +315,7 @@ sudo manage_vpn_gateway_peer remove <name>
 sudo manage_vpn_gateway_peer apply
 ```
 
-`apply` regenerates swanctl conf, nftables, postrouting SNAT/bypass, **DNSDist peer zone rules**, reloads strongSwan and dnsdist, and **initiates all peers**.
+`apply` regenerates swanctl conf, nftables, postrouting SNAT/bypass, **DNSDist peer zone rules**, reloads strongSwan, restarts dnsdist, and **initiates all peers**.
 
 ---
 
@@ -332,7 +332,7 @@ remote_dns_server: <exporter admin IP>:53
 remote_local_zone: test-us-east-1.local
 ```
 
-On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block) and reloads `dnsdist`. Rules must appear **before** local zone and recursion actions.
+On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block) and restarts `dnsdist`. Rules must appear **before** local zone and recursion actions.
 
 On the **exporting** site: `vpn_gateway.nat` is set via Terraform; uncomment `nat:` in peer YAML only to override. `nat_source` defaults to the admin interface. On the **importing** site: uncomment `remote_nat: yes` when the remote uses NAT; `remote_nat_source`, `remote_dns_server`, and `remote_local_zone` are provided by the export.
 

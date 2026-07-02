@@ -801,6 +801,14 @@ function vpn_gateway_dnsdist_available {
         && [[ -f /usr/local/etc/.powerdns_installed ]]
 }
 
+function vpn_gateway_restart_dnsdist {
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    # dnsdist does not re-execute dnsdist.conf on reload; peer pools need a restart.
+    systemctl restart dnsdist.service
+}
+
 function vpn_gateway_regenerate_dnsdist_peer_rules {
     local peer_file safe_name pool zone rules_file tmp
 
@@ -886,7 +894,7 @@ function vpn_gateway_regenerate_dnsdist_peer_rules {
     install -m 0644 "$tmp" "$VPN_GATEWAY_DNSDIST_CONF"
     rm -f "$rules_file" "$tmp"
 
-    systemctl try-reload-or-restart dnsdist.service
+    vpn_gateway_restart_dnsdist
 }
 
 function vpn_gateway_apply_all {
