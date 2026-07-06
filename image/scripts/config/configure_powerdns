@@ -29,6 +29,58 @@ set -e
 
 allowed_subnets=${config_powerdns_allowed_subnets:-0.0.0.0/0}
 
+PIHOLE_COMPOSE_DIR=/usr/local/lib/cloud-inceptor/pihole
+
+powerdns_pihole_remove_stale() {
+  if [[ ! -f "$PIHOLE_COMPOSE_DIR/docker-compose.yml" ]]; then
+    docker rm -f pihole 2>/dev/null || true
+    return 0
+  fi
+
+  pushd "$PIHOLE_COMPOSE_DIR" >/dev/null
+  docker compose down --remove-orphans 2>/dev/null || true
+  docker rm -f pihole 2>/dev/null || true
+  popd >/dev/null
+}
+
+powerdns_pihole_compose_up() {
+  pushd "$PIHOLE_COMPOSE_DIR" >/dev/null
+  docker compose up -d --force-recreate --remove-orphans
+  popd >/dev/null
+}
+
+powerdns_pihole_running() {
+  docker ps --filter name=^pihole$ --filter status=running --format '{{.Names}}' \
+    | grep -qx pihole
+}
+
+powerdns_wait_for_pihole_compose() {
+  local compose_pid=$1
+  local compose_status attempt
+
+  set +e
+  wait "$compose_pid"
+  compose_status=$?
+  set -e
+
+  if [[ $compose_status -eq 0 ]] && powerdns_pihole_running; then
+    return 0
+  fi
+
+  echo "Pi-Hole compose exited ${compose_status}; retrying after removing stale container state..."
+  for attempt in 1 2 3; do
+    powerdns_pihole_remove_stale
+    if powerdns_pihole_compose_up && powerdns_pihole_running; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "ERROR! Pi-Hole failed to start after retries." >&2
+  docker logs pihole 2>&1 | tail -80 >&2 || true
+  return 1
+}
+
 #
 # Configure Pi-Hole DNS server
 #
@@ -50,12 +102,17 @@ BLACKLIST_URL=""
 REGEX_BLACKLIST_URL="https://raw.githubusercontent.com/mmotti/pihole-regex/master/regex.list"
 EOF
 
-HOME=$(pwd) \
-  docker load < /usr/local/lib/cloud-inceptor/pihole.tgz
-rm /usr/local/lib/cloud-inceptor/pihole.tgz
+if [[ -f /usr/local/lib/cloud-inceptor/pihole.tgz ]]; then
+  HOME=$(pwd) \
+    docker load < /usr/local/lib/cloud-inceptor/pihole.tgz
+  rm -f /usr/local/lib/cloud-inceptor/pihole.tgz
+elif ! docker image inspect mycs/pihole:latest >/dev/null 2>&1; then
+  echo "ERROR! Pi-hole image not loaded and /usr/local/lib/cloud-inceptor/pihole.tgz is missing." >&2
+  exit 1
+fi
 
-mkdir -p /usr/local/lib/cloud-inceptor/pihole
-pushd /usr/local/lib/cloud-inceptor/pihole
+mkdir -p "$PIHOLE_COMPOSE_DIR"
+pushd "$PIHOLE_COMPOSE_DIR"
 
 cat >docker-compose.yml <<EOF
 # More info at https://github.com/pi-hole/docker-pi-hole/ and https://docs.pi-hole.net/
@@ -106,7 +163,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 0 3 * * 6   root    test -x /usr/local/lib/cloud-inceptor/pihole/update_lists && /usr/local/lib/cloud-inceptor/pihole/update_lists
 EOF
 
-docker compose up --detach 2>&1 &
+powerdns_pihole_remove_stale
+docker compose up -d --force-recreate --remove-orphans 2>&1 &
 pihole_startup_pid=$!
 popd
 
@@ -252,12 +310,9 @@ addAction(NetmaskGroupRule(dns_sink_ips), PoolAction('pihole'))
 addAction(AllRule(), PoolAction('auth'))
 ---EOF
 
-# Wait for pihole container to come up
-wait $pihole_startup_pid
-pihole_cids=$(docker ps -a | awk '/^[0-9a-f]/{ print $1 }')
-for cid in $(echo -e "$pihole_cids"); do
-  docker logs $cid
-done
+# Wait for Pi-Hole container (compose runs in parallel with pdns/dnsdist setup above)
+powerdns_wait_for_pihole_compose "$pihole_startup_pid"
+docker logs pihole 2>&1 | tail -40
 
 # Wait for pihole dns service to come up
 set +e

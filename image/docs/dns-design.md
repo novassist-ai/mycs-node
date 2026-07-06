@@ -212,6 +212,9 @@ docker exec pihole pihole status
 | `.local` names fail from jumpbox (`ping`, `getent`) | `systemd-resolved` mDNS handling for `.local` | Jumpbox `resolved.conf.d/bastion-dns.conf`; `resolvectl query <name>` |
 | VPN DNS times out (no response) | Site-to-site `remote_ts` claimed local `vpn_network` | `manage_vpn_gateway_peer apply`; see [vpn-gateway-design.md](vpn-gateway-design.md#shared-road-warrior-subnet-vpn_network) |
 | No DNS at all | DNSDist not bound to admin IP | `ss -ulnp | grep :53`; `powerdns.ns_ip` matches admin interface |
+| `configure_powerdns` fails at Pi-Hole | Stale Docker state on persisted `/data/docker` after bastion replace | `docker rm -f pihole`; re-run script; see RWLayer note below |
+| `RWLayer ... unexpectedly nil` on Pi-Hole start | Ghost `pihole` container metadata on data volume | `configure_powerdns` removes stale container before start; or `docker rm -f pihole && docker compose up -d --force-recreate` in `pihole/` |
+| dnsdist never starts | `configure_powerdns` exits before Pi-Hole wait succeeds | Fix Pi-Hole first; check `/var/log/configure_powerdns.log` |
 | Pi-hole not starting | Docker not ready | `configure_docker` log; `docker ps -a` |
 | Records missing | Static records not in config | `/etc/mycs/config.yml` → `powerdns.dns_records` |
 
