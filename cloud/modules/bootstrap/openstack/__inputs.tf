@@ -163,7 +163,7 @@ variable "bastion_data_disk_size" {
 }
 
 variable "bastion_data_disk_device_name" {
-  default = "vdb"
+  default = "sdb"
 }
 
 variable "bastion_host_name" {
