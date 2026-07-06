@@ -65,8 +65,23 @@ Required: `name`, `host`, `remote_cidr`, `auth`. `local_cidr` defaults from `vpn
 | `remote_nat_source` | — | Required when `remote_nat: yes`; remote gateway IP (`/32` in `remote_ts`) |
 | `remote_peer_vpn_subnet` | — | Remote road-warrior pool (symmetric cross-site RW only) |
 | `remote_cidr` | — | Remote admin subnet (routing/docs; may differ from effective `remote_ts`) |
+| *(fixed)* IKE version | **2** | Always IKEv2 (`version = 2` in swanctl). No peer YAML or config.yml field; IKEv1 is not supported. |
+| `ike_encryption` | `aes256` | Phase 1 encryption algorithm |
+| `ike_integrity` | `sha256` | Phase 1 integrity / PRF |
+| `ike_dh_group` | `14` | Phase 1 Diffie-Hellman group (`14` = modp2048) |
+| `ike_lifetime` | `86400` | IKE rekey interval (seconds) |
+| `nat_t` | `yes` | NAT-T / UDP encapsulation (`encap` in swanctl) |
+| `ipsec_encryption` | `aes256` | Phase 2 encryption algorithm |
+| `ipsec_integrity` | `sha256` | Phase 2 integrity algorithm |
+| *(fixed)* PFS | **yes** | Enabled by default: ESP proposal includes `ipsec_dh_group` (default `modp2048`). No `pfs:` YAML field. To disable PFS use `esp_proposals: aes256-sha256` (no DH suffix). |
+| `ipsec_dh_group` | `14` | Phase 2 DH group (`14` = modp2048); included in ESP proposal and enables PFS |
+| `ipsec_lifetime` | `43200` | CHILD SA lifetime (seconds) |
+| `ike_proposals` | — | Optional raw IKE proposal string (overrides `ike_*` fields) |
+| `esp_proposals` | — | Optional raw ESP proposal string (overrides `ipsec_*` fields; omit DH suffix to disable PFS) |
 
-Global `vpn_gateway` in config.yml: `enabled`, `protocol`, `local_id`, `local_cidr`, `nat` (default SNAT for all peers unless overridden in peer YAML).
+**Fixed defaults (not overridable via peer YAML):** IKE version **2**. **PFS yes** via default `ipsec_dh_group: 14` → ESP proposal `aes256-sha256-modp2048`.
+
+Global `vpn_gateway` in config.yml: `enabled`, `protocol`, `local_id`, `local_cidr`, `nat` (default SNAT for all peers unless overridden in peer YAML), plus global crypto defaults (`ike_encryption`, `ike_integrity`, `ike_dh_group`, `ike_lifetime`, `ipsec_encryption`, `ipsec_integrity`, `ipsec_dh_group`, `ipsec_lifetime`, `nat_t`).
 
 ```yaml
 vpn_gateway:
@@ -78,6 +93,31 @@ vpn_gateway:
 ```
 
 Set `vpn_gateway_nat = true` in bootstrap Terraform on bastions that SNAT toward peers (e.g. OVH). Independent of `bastion_as_nat`.
+
+Example peer matching a typical HSCN / enterprise Phase 1+2 policy (all values shown are defaults):
+
+```yaml
+name: remote-gateway
+host: gateway.example.com
+remote_id: gateway.example.com
+remote_cidr: 172.20.9.192/26
+auth: cert
+remote_ca: remote-ca.pem
+remote_ca_pem: |
+  -----BEGIN CERTIFICATE-----
+  ...
+ike_encryption: aes256
+ike_integrity: sha256
+ike_dh_group: 14
+ike_lifetime: 86400
+nat_t: yes
+# IKE version: 2 (fixed — not a YAML field)
+ipsec_encryption: aes256
+ipsec_integrity: sha256
+ipsec_dh_group: 14      # default enables PFS (no separate pfs: field)
+ipsec_lifetime: 43200
+# Default ESP proposal: aes256-sha256-modp2048 (PFS on)
+```
 
 ---
 

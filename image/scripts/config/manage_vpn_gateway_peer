@@ -88,7 +88,31 @@ remote bastion's vpn.subnet when road-warrior VPN is enabled on both sides.
   remote_ca_file: /path/to/ca.pem   # optional alternative to remote_ca_pem
   psk: ""                   # required when auth=psk
 
-Global IKE/local identity and local_cidr defaults come from vpn_gateway in /etc/mycs/config.yml.
+IKE / IPsec (optional — per-peer overrides; defaults match common Phase 1/2 policies):
+
+  Fixed defaults (no peer YAML field — always applied):
+    IKE version: 2          # hardcoded as "version = 2" in swanctl; IKEv1 not supported
+    PFS: yes                # enabled by default via ipsec_dh_group (DH in ESP proposal);
+                            # omit DH only with esp_proposals override (e.g. aes256-sha256)
+
+  # Phase 1
+  ike_encryption: aes256      # default: aes256
+  ike_integrity: sha256       # default: sha256
+  ike_dh_group: 14             # default: 14 (modp2048)
+  ike_lifetime: 86400          # default: 86400 (rekey_time, seconds)
+  nat_t: yes                   # default: yes (strongSwan encap / NAT-T)
+
+  # Phase 2
+  ipsec_encryption: aes256     # default: aes256
+  ipsec_integrity: sha256      # default: sha256
+  ipsec_dh_group: 14           # default: 14 (modp2048); presence enables PFS
+  ipsec_lifetime: 43200        # default: 43200 (CHILD SA life_time, seconds)
+
+  # Advanced: raw strongSwan proposal strings (override the fields above)
+  ike_proposals: aes256-sha256-prfsha256-modp2048
+  esp_proposals: aes256-sha256-modp2048
+
+Global IKE/local identity, local_cidr, and crypto defaults also come from vpn_gateway in /etc/mycs/config.yml.
 EOF
 }
 

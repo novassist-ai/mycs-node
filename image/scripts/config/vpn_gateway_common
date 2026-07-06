@@ -229,6 +229,8 @@ function vpn_gateway_peer_load {
         echo "ERROR! peer $peer_file auth=psk requires psk" >&2
         return 1
     fi
+
+    vpn_gateway_validate_peer_crypto "$peer_file" || return 1
 }
 
 function vpn_gateway_global_local_id {
@@ -304,6 +306,37 @@ function vpn_gateway_build_esp_proposals {
     local dh
     dh=$(vpn_gateway_resolve_dh_group "$dh_group") || return 1
     echo "${enc}-${int}-${dh}"
+}
+
+function vpn_gateway_validate_peer_crypto {
+    local peer_file=$1
+    local lifetime_key lifetime_val
+
+    if [[ -n "${peer_nat_t:-}" ]]; then
+        case "$peer_nat_t" in
+            yes|no) ;;
+            *)
+                echo "ERROR! peer $peer_file nat_t must be yes or no (NAT-T / UDP encap)" >&2
+                return 1
+                ;;
+        esac
+    fi
+
+    if [[ -n "${peer_ike_dh_group:-}" ]]; then
+        vpn_gateway_resolve_dh_group "$peer_ike_dh_group" || return 1
+    fi
+
+    if [[ -n "${peer_ipsec_dh_group:-}" ]]; then
+        vpn_gateway_resolve_dh_group "$peer_ipsec_dh_group" || return 1
+    fi
+
+    for lifetime_key in peer_ike_lifetime peer_ipsec_lifetime; do
+        lifetime_val=${!lifetime_key}
+        if [[ -n $lifetime_val && ! $lifetime_val =~ ^[0-9]+$ ]]; then
+            echo "ERROR! peer $peer_file ${lifetime_key#peer_} must be a positive integer (seconds)" >&2
+            return 1
+        fi
+    done
 }
 
 function vpn_gateway_resolve_start_action {
