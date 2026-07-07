@@ -117,6 +117,7 @@ module "config" {
   vpn_gateway_nat      = var.vpn_gateway_nat
 
   vpn_gateway_peer_export_path = var.vpn_gateway_peer_export_path
+  vpn_gateway_peer_config_paths = var.vpn_gateway_peer_config_paths
   bastion_admin_subnet_cidr = (
     var.configure_admin_network
     ? openstack_networking_subnet_v2.admin[0].cidr

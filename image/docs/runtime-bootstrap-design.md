@@ -130,6 +130,10 @@ Creates the admin user, SSH keys, and passwords from `server.admin_*` config key
 
 HTTPS admin API, static content from `/var/www/html`, external authentication via pwauth.
 
+### configure_vpn_gateway
+
+Site-to-site IPsec gateway bootstrap. Consumes peer YAML from `/usr/local/etc/vpn-gw-peers/` on first run (each file via `vpn_gateway_peer_add`), then removes that directory. Persistent peers live under `/data/strongswan/peers/`. See [vpn-gateway-design.md](vpn-gateway-design.md).
+
 ### configure_docker
 
 Enables Docker, loads saved Pi-hole and OpenSSL images, installs `DOCKER-USER` forward bypass via `apply_docker_user_forward` and systemd drop-ins, and registers `cloud-inceptor-docker-pihole.service` for boot. Re-running `configure_docker` on an already-configured host refreshes boot units only. See [network-design.md](network-design.md#docker-docker-user-forward-bypass).

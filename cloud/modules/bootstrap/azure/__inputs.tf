@@ -291,6 +291,12 @@ variable "tunnel_vpn_port_end" {
   default = ""
 }
 
+variable "vpn_gateway_peer_config_paths" {
+  type        = list(string)
+  default     = []
+  description = "Local paths to peer YAML files uploaded to /usr/local/etc/vpn-gw-peers/ on the bastion at first boot."
+}
+
 #
 # Configure SMTP
 #

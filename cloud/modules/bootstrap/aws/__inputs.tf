@@ -286,6 +286,12 @@ variable "vpn_gateway_peer_export_path" {
   description = "When set, write this bastion's VPN gateway peer export YAML to this path."
 }
 
+variable "vpn_gateway_peer_config_paths" {
+  type        = list(string)
+  default     = []
+  description = "Local paths to peer YAML files uploaded to /usr/local/etc/vpn-gw-peers/ on the bastion at first boot."
+}
+
 #
 # Wireguard configuration
 #

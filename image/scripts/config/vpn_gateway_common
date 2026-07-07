@@ -9,6 +9,7 @@
 VPN_GATEWAY_COMMON_LOADED=1
 
 VPN_GATEWAY_PEERS_DIR=${VPN_GATEWAY_PEERS_DIR:-/data/strongswan/peers}
+VPN_GATEWAY_BOOTSTRAP_PEERS_DIR=${VPN_GATEWAY_BOOTSTRAP_PEERS_DIR:-/usr/local/etc/vpn-gw-peers}
 VPN_GATEWAY_NFT_CONF=${VPN_GATEWAY_NFT_CONF:-/data/network/etc/vpn-gateway-peers.nft}
 VPN_GATEWAY_DNSDIST_CONF=${VPN_GATEWAY_DNSDIST_CONF:-/etc/dnsdist/dnsdist.conf}
 VPN_GATEWAY_DNSDIST_BEGIN='-- BEGIN VPN gateway peer DNS (managed by manage_vpn_gateway_peer)'
@@ -1138,6 +1139,29 @@ function vpn_gateway_list_peers {
             "$peer_remote_cidr" "$peer_nat" "$peer_remote_nat" "$peer_auth"
     done
     shopt -u nullglob
+}
+
+function vpn_gateway_bootstrap_peers_configured {
+    [[ -d $VPN_GATEWAY_BOOTSTRAP_PEERS_DIR ]] \
+        && { compgen -G "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+            || compgen -G "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR/*.yml" >/dev/null 2>&1; }
+}
+
+function vpn_gateway_install_bootstrap_peers {
+    local peer_file
+
+    if ! vpn_gateway_bootstrap_peers_configured; then
+        return 0
+    fi
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"/*.yaml \
+        "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_add "$peer_file" || return 1
+    done
+    shopt -u nullglob
+
+    rm -rf "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"
 }
 
 function vpn_gateway_peer_add {

@@ -16,7 +16,8 @@ fi
 
 if ! network_vpn_gateway_enabled \
   && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
-  && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+  && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1 \
+  && ! vpn_gateway_bootstrap_peers_configured; then
   echo "Skipping VPN gateway setup (disabled and no peers defined)."
   exit 0
 fi
@@ -26,7 +27,12 @@ mkdir -p "$VPN_GATEWAY_PEERS_DIR"
 vpn_gateway_ensure_swanctl_base
 vpn_gateway_install_cli
 vpn_gateway_install_boot_service
-vpn_gateway_apply_all
+
+if vpn_gateway_bootstrap_peers_configured; then
+  vpn_gateway_install_bootstrap_peers || exit 1
+else
+  vpn_gateway_apply_all
+fi
 
 set +ex
 touch /usr/local/etc/.vpn_gateway_installed

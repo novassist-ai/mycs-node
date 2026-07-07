@@ -25,6 +25,8 @@ Road-warrior VPN: [vpn-design.md](vpn-design.md). Network context: [network-desi
 
 Peers live under `/data/strongswan/peers/` and are managed with `manage_vpn_gateway_peer` (no image rebuild).
 
+At first boot, `configure_vpn_gateway` installs any peer YAML files found in `/usr/local/etc/vpn-gw-peers/` (image or cloud-init drop-in), then removes that directory. Each file is processed with the same logic as `manage_vpn_gateway_peer add`. Terraform can populate that directory via the `vpn_gateway_peer_config_paths` input on the `bastion-config` module (passed through bootstrap modules).
+
 **Default:** symmetric peering — both bastions use full admin (± road-warrior) traffic selectors and may initiate the tunnel.
 
 **Optional NAT:** when `vpn_gateway.nat: yes` in config.yml (Terraform `vpn_gateway_nat`), this bastion **SNATs** outbound peer traffic to `nat_source`. Per-peer `nat:` in YAML overrides the global default. The remote site should set **`remote_nat: yes`** so its `remote_ts` is only the gateway `/32`.

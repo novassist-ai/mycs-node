@@ -110,6 +110,8 @@ module "config" {
   smtp_relay_host    = var.smtp_relay_host
   smtp_relay_port    = var.smtp_relay_port
   smtp_relay_api_key = var.smtp_relay_api_key
+
+  vpn_gateway_peer_config_paths = var.vpn_gateway_peer_config_paths
 }
 
 locals {

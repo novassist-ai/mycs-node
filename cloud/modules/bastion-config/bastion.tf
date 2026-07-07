@@ -71,6 +71,7 @@ write_files:
   owner: mycs:root
   permissions: '0600'
 
+${local.vpn_gateway_peer_write_files_yaml}
 # Web Server home page
 - encoding: gzip+base64
   content: ${base64gzip(local.index_html)}
@@ -90,6 +91,15 @@ USER_DATA
 
 locals {
   admin_email = "${var.bastion_admin_user}@${var.vpc_dns_zone}"
+
+  vpn_gateway_peer_write_files_yaml = join("\n", [
+    for path in var.vpn_gateway_peer_config_paths : <<-PEER
+- encoding: gzip+base64
+  content: ${base64gzip(file(path))}
+  path: /usr/local/etc/vpn-gw-peers/${basename(path)}
+  permissions: '0600'
+PEER
+  ])
 
   # Create shorter email key if it is too long when 
   # vpc dns is included, as vpn cert creation limits 

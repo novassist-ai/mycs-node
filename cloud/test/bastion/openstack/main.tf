@@ -73,6 +73,8 @@ module "bootstrap" {
 
   vpn_gateway_peer_export_path = "${path.module}/.${var.region}/ovh-${var.region}-peer.yml"
 
+  vpn_gateway_peer_config_paths = var.vpn_gateway_peer_config_paths
+
   bastion_allow_public_ssh = true
 
   bastion_host_name = "inceptor"

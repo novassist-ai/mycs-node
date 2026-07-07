@@ -88,6 +88,8 @@ module "bootstrap" {
 
   vpn_gateway_peer_export_path = "${path.module}/.${data.aws_region.default.region}/aws-${data.aws_region.default.region}-peer.yml"
 
+  vpn_gateway_peer_config_paths = var.vpn_gateway_peer_config_paths
+
   # Whether to allow SSH access to bastion server
   bastion_allow_public_ssh = true
 

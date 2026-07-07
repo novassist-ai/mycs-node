@@ -75,6 +75,12 @@ variable "configure_admin_network" {
   type = string
 }
 
+variable "vpn_gateway_peer_config_paths" {
+  type        = list(string)
+  default     = []
+  description = "Local paths to peer YAML files uploaded to the bastion at first boot via cloud-init."
+}
+
 #
 # Distinct CIDR for VPCs by OVH region
 #

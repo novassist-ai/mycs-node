@@ -254,6 +254,12 @@ variable "bastion_admin_subnet_cidr" {
   description = "Admin subnet CIDR of this bastion; required when vpn_gateway_peer_export_path is set."
 }
 
+variable "vpn_gateway_peer_config_paths" {
+  type        = list(string)
+  default     = []
+  description = "Local filesystem paths to VPN gateway peer YAML files uploaded to /usr/local/etc/vpn-gw-peers/ via cloud-init for first-boot install by configure_vpn_gateway."
+}
+
 #
 # OpenVPN configuration
 #
