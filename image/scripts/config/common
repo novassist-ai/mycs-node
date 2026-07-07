@@ -133,6 +133,11 @@ function network_nft_restore {
 }
 
 function network_nft_save {
+    if [[ ! -e /usr/local/etc/.network_installed ]]; then
+        echo "ERROR! refusing to persist nftables before configure_network completed" >&2
+        return 1
+    fi
+
     mkdir -p /data/network/etc
     : > "$NFT_CONF"
     local spec

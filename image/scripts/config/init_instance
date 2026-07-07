@@ -83,7 +83,7 @@ function run_config_script {
 }
 
 run_config_script mount_volume
-run_config_script configure_network
+run_config_script configure_network || exit 1
 run_config_script configure_users
 run_config_script configure_apache
 run_config_script configure_docker

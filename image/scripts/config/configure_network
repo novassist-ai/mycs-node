@@ -5,6 +5,56 @@ set -exo pipefail
 SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
 source $SCRIPT_HOME/common
 
+function configure_network_nft_chain_contains {
+  local family_table=$1
+  local chain=$2
+  local needle=$3
+
+  nft list chain "$family_table" "$chain" 2>/dev/null | grep -Fq "$needle"
+}
+
+# Idempotent: after restore, skip rules already present in the loaded ruleset.
+function configure_network_apply_lan_routing {
+  local public_itf=$1
+  local l ll src_subnet src_itf dest_subnet dest_itf
+
+  for l in "${lans[@]}"; do
+    src_subnet=$(echo "$l" | awk -F'|' '{print $1}')
+    src_itf=$(echo "$l" | awk -F'|' '{print $2}')
+
+    if [[ -n $src_subnet ]]; then
+      if ! configure_network_nft_chain_contains ip mycs_nat postrouting \
+          "oifname \"$public_itf\" ip saddr $src_subnet masquerade"; then
+        network_nft_insert_nat oifname "$public_itf" ip saddr "$src_subnet" masquerade
+      fi
+
+      if [[ $src_itf != $public_itf ]]; then
+        if ! configure_network_nft_chain_contains inet mycs_filter forward \
+            "iifname \"$src_itf\" oifname \"$public_itf\" ip saddr $src_subnet ct state new accept"; then
+          network_nft_insert_forward iifname "$src_itf" oifname "$public_itf" \
+            ip saddr "$src_subnet" ct state new accept
+        fi
+
+        for ll in "${lans[@]}"; do
+          dest_subnet=$(echo "$ll" | awk -F'|' '{print $1}')
+          dest_itf=$(echo "$ll" | awk -F'|' '{print $2}')
+
+          if [[ -n $dest_subnet \
+            && "$src_subnet" != "$dest_subnet" \
+            && $dest_itf != $public_itf ]]; then
+
+            if ! configure_network_nft_chain_contains inet mycs_filter forward \
+                "iifname \"$src_itf\" oifname \"$dest_itf\" ip saddr $src_subnet ip daddr $dest_subnet ct state new accept"; then
+              network_nft_insert_forward iifname "$src_itf" oifname "$dest_itf" \
+                ip saddr "$src_subnet" ip daddr "$dest_subnet" ct state new accept
+            fi
+          fi
+        done
+      fi
+    fi
+  done
+}
+
 [[ ! -e /usr/local/etc/.network_installed ]] || exit 0
 
 if [[ -z $config_server_dmz_itf_ip ]]; then
@@ -65,8 +115,8 @@ network:
   ethernets:
 ---EOF
 
-lans=()
 dhcpd_interfaces=""
+lans=()
 
 i=0
 j=51
@@ -116,10 +166,8 @@ for n in $(echo $config_server_lan_interfaces | sed "s/,/ /g"); do
 
   if [[ -z "$static_route_subnet" \
     || "$static_route_subnet" == "0.0.0.0/0" ]]; then
-
     lan_itf="$subnet|$itf"
   else
-    netmask=$(ipcalc $static_route_subnet | awk '/Netmask/{ print $2 }')
     lan_itf="$static_route_subnet|$itf"
   fi
   lans+=($lan_itf)
@@ -289,43 +337,15 @@ if network_nft_restore; then
   echo "Restored nftables ruleset from $NFT_CONF"
 else
   network_nft_tables_exist || network_nft_init
-
-  # Create rules for routing packets between peer lans
-  for l in "${lans[@]}"; do
-
-    src_subnet=$(echo $l | awk -F'|' '{print $1}')
-    src_itf=$(echo $l | awk -F'|' '{print $2}')
-
-    if [[ -n $src_subnet ]]; then
-
-      # Masquerade traffic from LAN to "the world"
-      network_nft_insert_nat oifname "$public_itf" ip saddr "$src_subnet" masquerade
-
-      if [[ $src_itf != $public_itf ]]; then
-
-        # Forward traffic initiated from LAN to access "the world"
-        network_nft_insert_forward iifname "$src_itf" oifname "$public_itf" \
-          ip saddr "$src_subnet" ct state new accept
-
-        for ll in "${lans[@]}"; do
-          dest_subnet=$(echo $ll | awk -F'|' '{print $1}')
-          dest_itf=$(echo $ll | awk -F'|' '{print $2}')
-
-          if [[ -n $dest_subnet \
-            && "$src_subnet" != "$dest_subnet" \
-            && $dest_itf != $public_itf ]]; then
-
-            # Forward traffic initiated from this LAN to other LANs connected to this router
-            network_nft_insert_forward iifname "$src_itf" oifname "$dest_itf" \
-              ip saddr "$src_subnet" ip daddr "$dest_subnet" ct state new accept
-          fi
-        done
-      fi
-    fi
-  done
-
-  network_nft_save
 fi
+
+# LAN rules are derived from config.yml, not from the persisted file. A volume that
+# outlives a bastion replace can carry an nftables.conf saved without them (e.g.
+# when a prior init restored an incomplete file and skipped this block, or when
+# init_instance continued after configure_network failed and a VPN script saved).
+configure_network_apply_lan_routing "$public_itf"
+touch /usr/local/etc/.network_installed
+network_nft_save
 
 #
 # Save network configuration
@@ -367,4 +387,3 @@ if [[ $config_server_enable_dhcpd == true ]]; then
 fi
 
 set +ex
-touch /usr/local/etc/.network_installed
