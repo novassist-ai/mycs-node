@@ -161,13 +161,15 @@ sudo /usr/local/lib/cloud-inceptor/configure_strongswan
 
 ## Boot Hook — rc.local
 
-`scripts/config/rc.local` runs on **every boot** (not just first boot):
+**cloud-init user-data runs once** on first boot; marker files prevent `configure_*` scripts from re-running on reboot.
 
-1. `nft -f /data/network/etc/nftables.conf` — restore LAN/VPN nftables
+`scripts/config/rc.local` runs on **every boot**:
+
+1. `nft -f /data/network/etc/nftables.conf` — restore persisted nftables from the data volume
 2. Ensure `/var/run/mycs` permissions
 3. Re-run `configure_apache` if Apache is installed
 
-VPN gateway peer nftables and NAT bypass are handled by `cloud-inceptor-vpn-gateway-peers.service` (installed by `configure_vpn_gateway`).
+VPN gateway peer nftables and NAT bypass are handled by `cloud-inceptor-vpn-gateway-peers.service` (installed by `configure_vpn_gateway`). Cross-site DNSDist peer backends are refreshed on boot by `cloud-inceptor-vpn-gateway-dnsdist.service` (after strongSwan and dnsdist). Docker `DOCKER-USER` bypass is handled by `cloud-inceptor-docker-forward.service` and `docker.service` `ExecStartPost`.
 
 ---
 

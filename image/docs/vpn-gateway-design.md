@@ -365,7 +365,7 @@ Cross-site DNS depends on **both** bastions having the peer configured and IPsec
 2. `manage_vpn_gateway_peer add <peer.yaml>` on bastion B
 3. If peer-zone lookups still fail on either side, run `manage_vpn_gateway_peer apply` on both
 
-Peer DNS downstreams use `healthCheckMode='up'`. A background recheck (`/var/log/vpn-gateway-dnsdist-recheck.log`) restarts dnsdist when the remote resolver becomes reachable after the other site is configured.
+Peer DNS downstreams use `healthCheckMode='auto'` with SOA probes for `ns1.<remote_local_zone>.`, `mustResolve=true`, and `reconnectOnUp=true`. A background recheck (`/var/log/vpn-gateway-dnsdist-recheck.log`) restarts dnsdist when the remote resolver becomes reachable after the other site is configured or after bastion restart.
 
 ---
 
@@ -382,7 +382,7 @@ remote_dns_server: <exporter admin IP>:53
 remote_local_zone: test-us-east-1.local
 ```
 
-On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block). Each peer downstream uses `healthCheckMode='up'`. dnsdist is restarted after strongSwan and peer initiation, and a background recheck retries when the remote site comes online later. Rules must appear **before** local zone and recursion actions.
+On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block). Each peer downstream uses active SOA health checks (`healthCheckMode='auto'`, `checkName='ns1.<zone>.'`, `reconnectOnUp=true`). dnsdist is restarted after strongSwan and peer initiation; `cloud-inceptor-vpn-gateway-dnsdist.service` repeats that on boot when peer YAML exists. Rules must appear **before** local zone and recursion actions.
 
 On the **exporting** site: `vpn_gateway.nat` is set via Terraform; uncomment `nat:` in peer YAML only to override. `nat_source` defaults to the admin interface. On the **importing** site: uncomment `remote_nat: yes` when the remote uses NAT; `remote_nat_source`, `remote_dns_server`, and `remote_local_zone` are provided by the export.
 

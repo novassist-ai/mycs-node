@@ -433,8 +433,23 @@ On every boot:
 
 - `rc.local` → `nft -f /data/network/etc/nftables.conf`
 - `cloud-inceptor-vpn-gateway-peers.service` → reload gateway nft, NAT bypass, policy routing, remove admin supernet routes
+- `cloud-inceptor-vpn-gateway-dnsdist.service` → restart dnsdist peer backends after strongSwan is up (when peer YAML exists)
 
 Stock `nftables.service` is disabled at image build time.
+
+### cloud-init vs reboot
+
+**cloud-init user-data runs once** on first boot. Each `configure_*` script checks `/usr/local/etc/.{service}_installed` and exits immediately on later boots.
+
+**Reboot path:** `rc.local` loads the persisted `/data/network/etc/nftables.conf`. No cloud-init re-run; no rule regeneration unless you remove marker files and re-run `configure_network`.
+
+### Why nftables.conf can be incomplete (root cause)
+
+LAN masquerade/forward rules are **generated from `config.yml`** during `configure_network`. They are then saved into `nftables.conf` together with any VPN rules added later by `configure_strongswan` / `configure_vpn_gateway`.
+
+**Bug (fixed):** when `/data/network/etc/nftables.conf` already existed on the data volume, `configure_network` restored it and **skipped LAN rule creation**, trusting the file to be complete. A volume that outlives a bastion VM replacement can carry a stale file. Additionally, `init_instance` used to **continue** after `configure_network` failed, allowing `configure_strongswan` to call `network_nft_save` with VPN-only rules and overwrite the persisted file before LAN rules ever existed.
+
+**Fix:** `configure_network` always applies LAN rules after restore/init, sets `.network_installed`, then saves. `init_instance` aborts if `configure_network` fails. `network_nft_save` refuses to run before `.network_installed` exists.
 
 ---
 
@@ -449,6 +464,8 @@ Docker installs an `ip filter FORWARD` chain with **policy DROP** and an empty *
 | `apply_docker_user_forward` | Idempotently inserts `ACCEPT` in `DOCKER-USER` per forward CIDR |
 | `docker.service.d/cloud-inceptor-forward.conf` | `ExecStartPost` re-applies rules on every `dockerd` start |
 | `cloud-inceptor-docker-forward.service` | Oneshot applies rules after Docker on boot |
+
+Docker `DOCKER-USER` rules are **not** saved in `/data/network/etc/nftables.conf` (iptables; recreated when `dockerd` starts). Jumpbox NAT uses **nftables** masquerade/forward in `mycs_nat` / `mycs_filter`, persisted in `nftables.conf`.
 
 CIDRs from `network_collect_docker_user_forward_cidrs`: road-warrior subnet, LAN prefixes, VPN gateway transit sources.
 
@@ -576,6 +593,20 @@ swanctl --list-sas
 ```bash
 iptables -S DOCKER-USER
 sudo /usr/local/lib/cloud-inceptor/apply_docker_user_forward
+```
+
+### Jumpbox or LAN host cannot reach Internet (gateway OK)
+
+**Symptom:** Hosts on the admin subnet ping the bastion gateway but not the Internet.
+
+**Cause:** Incomplete `/data/network/etc/nftables.conf` (see [Why nftables.conf can be incomplete](#why-nftablesconf-can-be-incomplete-root-cause) above).
+
+**Fix:** Re-run network configuration (writes complete rules and re-saves):
+
+```bash
+sudo rm -f /usr/local/etc/.network_installed
+sudo /usr/local/lib/cloud-inceptor/configure_network
+sudo manage_vpn_gateway_peer apply   # if site-to-site VPN is enabled
 ```
 
 ### Full network dump
