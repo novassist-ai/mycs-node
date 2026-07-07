@@ -992,6 +992,20 @@ function vpn_gateway_finish_dnsdist_apply {
     vpn_gateway_schedule_dnsdist_peer_recheck
 }
 
+function vpn_gateway_boot_dnsdist_apply {
+    if compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        || compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+        vpn_gateway_initiate_all_peers
+    fi
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+    vpn_gateway_finish_dnsdist_apply
+}
+
 function vpn_gateway_regenerate_dnsdist_peer_rules {
     local peer_file safe_name pool zone rules_file tmp
 
@@ -1008,8 +1022,9 @@ function vpn_gateway_regenerate_dnsdist_peer_rules {
         fi
         safe_name=$(vpn_gateway_sanitize_name "$peer_name")
         pool="recursor_${safe_name}"
+        peer_check_zone=${peer_remote_local_zone%% *}
         {
-            echo "newServer({address='${peer_remote_dns_server}', pool='${pool}', healthCheckMode='up'})"
+            echo "newServer({address='${peer_remote_dns_server}', pool='${pool}', healthCheckMode='auto', checkName='ns1.${peer_check_zone}.', checkType='SOA', mustResolve=true, checkInterval=10, checkTimeout=2000, maxCheckFailures=3, rise=2, reconnectOnUp=true})"
             echo "smn = newSuffixMatchNode()"
             for zone in $peer_remote_local_zone; do
                 echo "smn:add('${zone}')"
@@ -1173,9 +1188,10 @@ function vpn_gateway_peer_remove {
 }
 
 function vpn_gateway_install_boot_service {
-    local unit=/etc/systemd/system/cloud-inceptor-vpn-gateway-peers.service
+    local peers_unit=/etc/systemd/system/cloud-inceptor-vpn-gateway-peers.service
+    local dnsdist_unit=/etc/systemd/system/cloud-inceptor-vpn-gateway-dnsdist.service
 
-    cat << ---EOF > "$unit"
+    cat << ---EOF > "$peers_unit"
 [Unit]
 Description=Load VPN gateway peer nftables rules
 After=network-pre.target docker.service
@@ -1190,8 +1206,25 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 ---EOF
 
+    cat << ---EOF > "$dnsdist_unit"
+[Unit]
+Description=Refresh dnsdist peer backends after VPN gateway peers are up
+After=cloud-inceptor-vpn-gateway-peers.service strongswan.service dnsdist.service
+Wants=strongswan.service dnsdist.service
+ConditionPathExists=/usr/local/etc/.powerdns_installed
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'source /usr/local/lib/cloud-inceptor/common; source /usr/local/lib/cloud-inceptor/vpn_gateway_common; vpn_gateway_boot_dnsdist_apply'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
     systemctl daemon-reload
     systemctl enable cloud-inceptor-vpn-gateway-peers.service
+    systemctl enable cloud-inceptor-vpn-gateway-dnsdist.service
 }
 
 function vpn_gateway_install_cli {

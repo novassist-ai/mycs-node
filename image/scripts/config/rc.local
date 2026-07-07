@@ -11,9 +11,14 @@
 #
 # By default this script does nothing.
 
-# Ensure custom nftables rules are loaded
-[[ ! -e /data/network/etc/nftables.conf ]] \
-  || nft -f /data/network/etc/nftables.conf
+# Restore persisted nftables/sysctl and refresh DOCKER-USER when dockerd is
+# already up (docker must not start before this — see
+# cloud-inceptor-docker-pihole.service).
+if [[ -f /usr/local/lib/cloud-inceptor/common ]]; then
+  # shellcheck source=/dev/null
+  source /usr/local/lib/cloud-inceptor/common
+  network_apply_boot_network
+fi
 
 # Create default location for mycs
 # process resources and set appropriate

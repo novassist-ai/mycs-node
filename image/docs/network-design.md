@@ -181,7 +181,7 @@ Applied by `configure_network`. VPN-specific nftables are added later by each `c
 
 ### sysctl
 
-- `net.ipv4.ip_forward=1`
+- `net.ipv4.ip_forward=1` (written to `/etc/sysctl.conf` at first init; re-applied every boot via `rc.local`)
 - ICMP redirects disabled; `rp_filter=2` (loose)
 
 ### nftables tables
@@ -431,9 +431,11 @@ strongSwan installs routes in **table 220**. The bastion ensures `ip rule pref 2
 
 On every boot:
 
-- `rc.local` → `nft -f /data/network/etc/nftables.conf`
+- `rc.local` → `network_apply_boot_network` (nftables, sysctl, refresh `DOCKER-USER` if dockerd already up)
+- `cloud-inceptor-docker-pihole.service` → start `dockerd` and Pi-Hole **after** `rc-local.service`; apply `DOCKER-USER` last
 - `cloud-inceptor-vpn-gateway-peers.service` → reload gateway nft, NAT bypass, policy routing, remove admin supernet routes
-- `cloud-inceptor-vpn-gateway-dnsdist.service` → restart dnsdist peer backends after strongSwan is up (when peer YAML exists)
+- `cloud-inceptor-vpn-gateway-dnsdist.service` → re-initiate peers and restart dnsdist peer backends after strongSwan is up
+- `cloud-inceptor-docker-forward.service` → apply `DOCKER-USER` forward bypass after `dockerd` is up
 
 Stock `nftables.service` is disabled at image build time.
 
@@ -455,15 +457,19 @@ LAN masquerade/forward rules are **generated from `config.yml`** during `configu
 
 ## Docker DOCKER-USER Forward Bypass
 
-Docker installs an `ip filter FORWARD` chain with **policy DROP** and an empty **`DOCKER-USER`** chain when `dockerd` starts. Bastion VPN rules live in **`inet mycs_filter`** (policy accept). After reboot, Docker may register before `rc.local` reloads nftables, dropping forwarded VPN traffic unless `DOCKER-USER` allows it.
+Docker installs an `ip filter FORWARD` chain with **policy DROP** and an empty **`DOCKER-USER`** chain when `dockerd` starts. Bastion VPN rules live in **`inet mycs_filter`** (policy accept). After reboot, `dockerd` is socket-activated and may stay down until explicitly started; without `dockerd`, `DOCKER-USER` does not exist and `net.ipv4.ip_forward` may remain disabled despite `/etc/sysctl.conf`.
+
+**Boot order matters:** `rc.local` must load nftables masquerade/forward rules before `dockerd` starts. If Docker starts first, its `FORWARD` DROP policy blocks RW and LAN egress until `DOCKER-USER` bypass rules are applied — and Pi-Hole `docker compose up` can recreate Docker iptables chains, so bypass rules must be applied **last** in `boot_docker_pihole`.
 
 `configure_docker` installs:
 
 | Component | Purpose |
 |-----------|---------|
+| `boot_docker_pihole` | Start `dockerd`, bring up Pi-Hole compose, apply `DOCKER-USER` rules |
 | `apply_docker_user_forward` | Idempotently inserts `ACCEPT` in `DOCKER-USER` per forward CIDR |
 | `docker.service.d/cloud-inceptor-forward.conf` | `ExecStartPost` re-applies rules on every `dockerd` start |
-| `cloud-inceptor-docker-forward.service` | Oneshot applies rules after Docker on boot |
+| `cloud-inceptor-docker-pihole.service` | Oneshot starts `dockerd` and Pi-Hole after boot |
+| `cloud-inceptor-docker-forward.service` | Oneshot applies rules after `dockerd` is up on boot |
 
 Docker `DOCKER-USER` rules are **not** saved in `/data/network/etc/nftables.conf` (iptables; recreated when `dockerd` starts). Jumpbox NAT uses **nftables** masquerade/forward in `mycs_nat` / `mycs_filter`, persisted in `nftables.conf`.
 

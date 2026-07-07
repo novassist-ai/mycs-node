@@ -5,7 +5,27 @@ set -exo pipefail
 SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
 source $SCRIPT_HOME/common
 
-[[ -e /usr/local/etc/.docker_installed ]] && exit 0
+function docker_install_boot_service {
+    chmod +x /usr/local/lib/cloud-inceptor/boot_docker_pihole
+
+    cat << '---EOF' > /etc/systemd/system/cloud-inceptor-docker-pihole.service
+[Unit]
+Description=Start dockerd and Pi-Hole after boot
+After=rc-local.service network-online.target containerd.service
+Wants=containerd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cloud-inceptor/boot_docker_pihole
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+    systemctl daemon-reload
+    systemctl enable cloud-inceptor-docker-pihole.service
+}
 
 function docker_install_user_forward_hooks {
     local apply_script=/usr/local/lib/cloud-inceptor/apply_docker_user_forward
@@ -21,8 +41,8 @@ ExecStartPost=/usr/local/lib/cloud-inceptor/apply_docker_user_forward
     cat << '---EOF' > /etc/systemd/system/cloud-inceptor-docker-forward.service
 [Unit]
 Description=Allow bastion forwarded traffic through Docker FORWARD chain
-After=docker.service
-Requires=docker.service
+After=cloud-inceptor-docker-pihole.service docker.service
+Wants=cloud-inceptor-docker-pihole.service docker.service
 
 [Service]
 Type=oneshot
@@ -36,6 +56,10 @@ WantedBy=multi-user.target
     systemctl daemon-reload
     systemctl enable cloud-inceptor-docker-forward.service
 }
+
+docker_install_boot_service
+
+[[ -e /usr/local/etc/.docker_installed ]] && exit 0
 
 #
 # Configure Docker daemon
@@ -54,7 +78,7 @@ if [[ -n $config_server_docker_mount_path ]]; then
   cat << ---EOF > /etc/systemd/system/docker.service.d/docker.root.conf
 [Service]
 ExecStart=
-ExecStart=/usr/bin/dockerd --data-root ${config_server_docker_mount_path}/docker
+ExecStart=/usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock --data-root ${config_server_docker_mount_path}/docker
 ---EOF
 
   systemctl daemon-reload

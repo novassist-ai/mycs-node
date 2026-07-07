@@ -132,7 +132,7 @@ HTTPS admin API, static content from `/var/www/html`, external authentication vi
 
 ### configure_docker
 
-Enables Docker, loads saved Pi-hole and OpenSSL images, installs `DOCKER-USER` forward bypass via `apply_docker_user_forward` and systemd drop-ins. See [network-design.md](network-design.md#docker-docker-user-forward-bypass).
+Enables Docker, loads saved Pi-hole and OpenSSL images, installs `DOCKER-USER` forward bypass via `apply_docker_user_forward` and systemd drop-ins, and registers `cloud-inceptor-docker-pihole.service` for boot. Re-running `configure_docker` on an already-configured host refreshes boot units only. See [network-design.md](network-design.md#docker-docker-user-forward-bypass).
 
 ### configure_smtp
 
@@ -165,11 +165,13 @@ sudo /usr/local/lib/cloud-inceptor/configure_strongswan
 
 `scripts/config/rc.local` runs on **every boot**:
 
-1. `nft -f /data/network/etc/nftables.conf` — restore persisted nftables from the data volume
+1. `network_apply_boot_network` — `nft -f /data/network/etc/nftables.conf`, `sysctl -p /etc/sysctl.conf`, refresh `DOCKER-USER` if `dockerd` is already running
 2. Ensure `/var/run/mycs` permissions
 3. Re-run `configure_apache` if Apache is installed
 
-VPN gateway peer nftables and NAT bypass are handled by `cloud-inceptor-vpn-gateway-peers.service` (installed by `configure_vpn_gateway`). Cross-site DNSDist peer backends are refreshed on boot by `cloud-inceptor-vpn-gateway-dnsdist.service` (after strongSwan and dnsdist). Docker `DOCKER-USER` bypass is handled by `cloud-inceptor-docker-forward.service` and `docker.service` `ExecStartPost`.
+`cloud-inceptor-docker-pihole.service` starts `dockerd` and Pi-Hole **after** `rc-local.service` so nftables masquerade/forward rules exist before Docker's `FORWARD` DROP policy is applied. `boot_docker_pihole` applies `DOCKER-USER` bypass rules last (Pi-Hole compose can recreate Docker iptables chains).
+
+VPN gateway peer nftables and NAT bypass are handled by `cloud-inceptor-vpn-gateway-peers.service` (installed by `configure_vpn_gateway`). Cross-site DNSDist peer backends are refreshed on boot by `cloud-inceptor-vpn-gateway-dnsdist.service` (after strongSwan and dnsdist; also re-initiates peers). Docker `DOCKER-USER` bypass is also refreshed by `cloud-inceptor-docker-forward.service` and `docker.service` `ExecStartPost`.
 
 ---
 

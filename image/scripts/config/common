@@ -405,6 +405,22 @@ function network_apply_docker_user_forward {
     done < <(network_collect_docker_user_forward_cidrs "$public_itf")
 }
 
+function network_apply_boot_sysctl {
+    [[ -f /etc/sysctl.conf ]] || return 0
+    sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
+}
+
+function network_apply_boot_network {
+    [[ -e /data/network/etc/nftables.conf ]] \
+        && nft -f /data/network/etc/nftables.conf
+    network_apply_boot_sysctl
+    # dockerd may start before rc.local via systemd; refresh DOCKER-USER after
+    # nftables masquerade/forward rules are loaded so RW and LAN egress work.
+    if systemctl is-active --quiet docker.service 2>/dev/null; then
+        network_apply_docker_user_forward || true
+    fi
+}
+
 function network_apply_vpn_ingress_rules {
     local public_itf=$1
 

@@ -1,0 +1,56 @@
+#!/bin/bash
+#
+# Start dockerd and Pi-Hole after reboot. Docker is socket-activated by default;
+# without an explicit start, dockerd and DOCKER-USER may be missing until a
+# client connects. Pi-Hole compose only runs during configure_powerdns on first
+# init, so containers must be brought back on boot.
+#
+# Must run after rc.local has loaded nftables (cloud-inceptor-docker-pihole.service
+# orders After=rc-local.service).
+#
+
+set -e
+
+source /usr/local/lib/cloud-inceptor/common
+
+if [[ $(whoami) != root ]]; then
+    echo "This script needs to be run as root." >&2
+    exit 1
+fi
+
+[[ -f /usr/local/etc/.docker_installed ]] || exit 0
+
+if ! systemctl is-active --quiet docker.service; then
+    systemctl start docker.service
+fi
+
+attempt=0
+while [[ $attempt -lt 30 ]]; do
+    if systemctl is-active --quiet docker.service \
+        && docker info >/dev/null 2>&1; then
+        break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+done
+
+if ! docker info >/dev/null 2>&1; then
+    echo "WARNING! dockerd did not become ready after boot" >&2
+    exit 1
+fi
+
+if [[ -f /usr/local/etc/.powerdns_installed \
+    && -f /usr/local/lib/cloud-inceptor/pihole/docker-compose.yml ]]; then
+    if ! docker ps --filter name=^pihole$ --filter status=running --format '{{.Names}}' \
+        | grep -qx pihole; then
+        pushd /usr/local/lib/cloud-inceptor/pihole >/dev/null
+        docker compose up -d --remove-orphans
+        popd
+    fi
+fi
+
+# Pi-Hole compose can recreate Docker iptables chains; apply bypass rules last.
+network_apply_docker_user_forward || {
+    echo "WARNING! failed to apply DOCKER-USER forward bypass rules" >&2
+    exit 1
+}
