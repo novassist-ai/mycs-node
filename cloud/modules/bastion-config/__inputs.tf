@@ -260,6 +260,13 @@ variable "vpn_gateway_peer_config_paths" {
   description = "Local filesystem paths to VPN gateway peer YAML files uploaded to /usr/local/etc/vpn-gw-peers/ via cloud-init for first-boot install by configure_vpn_gateway."
 }
 
+variable "vpn_gateway_peer_file_contents" {
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+  description = "VPN gateway peer YAML filename => content for cloud-init upload (Terraform-rendered peers; use instead of paths when content is generated at apply time)."
+}
+
 #
 # OpenVPN configuration
 #

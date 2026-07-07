@@ -92,14 +92,22 @@ USER_DATA
 locals {
   admin_email = "${var.bastion_admin_user}@${var.vpc_dns_zone}"
 
-  vpn_gateway_peer_write_files_yaml = join("\n", [
-    for path in var.vpn_gateway_peer_config_paths : <<-PEER
+  vpn_gateway_peer_write_files_yaml = join("\n", concat(
+    [for path in var.vpn_gateway_peer_config_paths : <<-PEER
 - encoding: gzip+base64
   content: ${base64gzip(file(path))}
   path: /usr/local/etc/vpn-gw-peers/${basename(path)}
   permissions: '0600'
 PEER
-  ])
+    ],
+    [for name, content in var.vpn_gateway_peer_file_contents : <<-PEER
+- encoding: gzip+base64
+  content: ${base64gzip(content)}
+  path: /usr/local/etc/vpn-gw-peers/${name}
+  permissions: '0600'
+PEER
+    ]
+  ))
 
   # Create shorter email key if it is too long when 
   # vpc dns is included, as vpn cert creation limits 

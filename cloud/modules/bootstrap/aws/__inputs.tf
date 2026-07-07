@@ -292,6 +292,13 @@ variable "vpn_gateway_peer_config_paths" {
   description = "Local paths to peer YAML files uploaded to /usr/local/etc/vpn-gw-peers/ on the bastion at first boot."
 }
 
+variable "vpn_gateway_peer_file_contents" {
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+  description = "Peer YAML filename => content for cloud-init upload when content is Terraform-rendered."
+}
+
 #
 # Wireguard configuration
 #
