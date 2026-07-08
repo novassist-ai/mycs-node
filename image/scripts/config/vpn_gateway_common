@@ -33,6 +33,58 @@ function vpn_gateway_peer_strip_field {
     printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+function vpn_gateway_peer_split_cidrs {
+    local raw=$1
+    local cidr token
+
+    raw=$(printf '%s' "$raw" | tr ',' ' ')
+    for token in $raw; do
+        cidr=$(vpn_gateway_peer_strip_field "$token")
+        [[ -n $cidr ]] && echo "$cidr"
+    done
+}
+
+function vpn_gateway_peer_resolve_send_certreq {
+    local peer_file=$1
+    local peer_auth=$2
+    local peer_value=$3
+
+    if grep -Eq '^send_certreq:[[:space:]]*' "$peer_file"; then
+        case "$peer_value" in
+            yes|no) echo "$peer_value" ;;
+            *)
+                echo "ERROR! peer $peer_file send_certreq must be yes or no" >&2
+                return 1
+                ;;
+        esac
+        return 0
+    fi
+
+    if [[ "$peer_auth" == cert ]]; then
+        echo yes
+    else
+        echo no
+    fi
+}
+
+function vpn_gateway_peer_resolve_include_rw_pool {
+    local peer_file=$1
+    local peer_value=$2
+
+    if grep -Eq '^include_rw_pool:[[:space:]]*' "$peer_file"; then
+        case "$peer_value" in
+            yes|no) echo "$peer_value" ;;
+            *)
+                echo "ERROR! peer $peer_file include_rw_pool must be yes or no" >&2
+                return 1
+                ;;
+        esac
+        return 0
+    fi
+
+    echo yes
+}
+
 function vpn_gateway_peer_read_block_scalar {
     local peer_file=$1
     local key=$2
@@ -140,7 +192,7 @@ function vpn_gateway_peer_load {
     unset peer_name peer_host peer_remote_id peer_local_cidr peer_remote_cidr \
         peer_remote_peer_vpn_subnet peer_nat peer_nat_source peer_remote_nat \
         peer_remote_nat_source peer_remote_dns_server peer_remote_local_zone \
-        peer_auth peer_psk \
+        peer_auth peer_psk peer_send_certreq peer_include_rw_pool \
         peer_remote_ca peer_remote_ca_pem peer_remote_ca_file peer_auto peer_nat_t \
         peer_ike_encryption peer_ike_integrity peer_ike_dh_group peer_ike_lifetime \
         peer_ike_proposals peer_ipsec_encryption peer_ipsec_integrity \
@@ -166,6 +218,8 @@ function vpn_gateway_peer_load {
     peer_remote_dns_server=$(vpn_gateway_peer_strip_field "${peer_remote_dns_server:-}")
     peer_remote_local_zone=$(vpn_gateway_peer_strip_field "${peer_remote_local_zone:-}")
     peer_auth=$(vpn_gateway_peer_strip_field "${peer_auth:-}")
+    peer_send_certreq=$(vpn_gateway_peer_strip_field "${peer_send_certreq:-}")
+    peer_include_rw_pool=$(vpn_gateway_peer_strip_field "${peer_include_rw_pool:-}")
     peer_remote_ca=$(vpn_gateway_peer_strip_field "${peer_remote_ca:-}")
     peer_remote_ca_file=$(vpn_gateway_peer_strip_field "${peer_remote_ca_file:-}")
 
@@ -230,6 +284,11 @@ function vpn_gateway_peer_load {
         echo "ERROR! peer $peer_file auth=psk requires psk" >&2
         return 1
     fi
+
+    peer_send_certreq=$(vpn_gateway_peer_resolve_send_certreq \
+        "$peer_file" "$peer_auth" "$peer_send_certreq") || return 1
+    peer_include_rw_pool=$(vpn_gateway_peer_resolve_include_rw_pool \
+        "$peer_file" "$peer_include_rw_pool") || return 1
 
     vpn_gateway_validate_peer_crypto "$peer_file" || return 1
 }
@@ -378,15 +437,25 @@ function vpn_gateway_resolve_nat_source {
     return 1
 }
 
-# Local source CIDRs that may forward into a peer tunnel (admin + road-warrior).
+# Local source CIDRs that may forward into a peer tunnel (admin + optional road-warrior).
 function vpn_gateway_peer_local_forward_cidrs {
-    local local_cidr=$1
-    local vpn_cidr
+    local local_cidrs=$1
+    local include_rw_pool=${2:-yes}
+    local cidr vpn_cidr
 
-    echo "$local_cidr"
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && echo "$cidr"
+    done < <(vpn_gateway_peer_split_cidrs "$local_cidrs")
+
+    [[ "$include_rw_pool" == yes ]] || return 0
     network_roadwarrior_enabled || return 0
     vpn_cidr=$(network_roadwarrior_source_cidr)
-    [[ -n $vpn_cidr && "$vpn_cidr" != "$local_cidr" ]] && echo "$vpn_cidr"
+    [[ -n $vpn_cidr ]] || return 0
+
+    while IFS= read -r cidr; do
+        [[ "$cidr" == "$vpn_cidr" ]] && return 0
+    done < <(vpn_gateway_peer_split_cidrs "$local_cidrs")
+    echo "$vpn_cidr"
 }
 
 # Remote source CIDRs for nft forward / return-path rules.
@@ -406,14 +475,21 @@ function vpn_gateway_peer_remote_forward_cidrs {
 
 # Extra remote CIDRs appended to remote_ts (road-warrior pool, with shared-pool guard).
 function vpn_gateway_peer_remote_ts_extra_cidrs {
-    local remote_cidr=$1
+    local remote_cidrs=$1
     local remote_vpn_subnet=$2
-    local local_rw
+    local cidr local_rw
 
-    echo "$remote_cidr"
-    if [[ -z $remote_vpn_subnet || "$remote_vpn_subnet" == "$remote_cidr" ]]; then
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && echo "$cidr"
+    done < <(vpn_gateway_peer_split_cidrs "$remote_cidrs")
+
+    if [[ -z $remote_vpn_subnet ]]; then
         return 0
     fi
+
+    while IFS= read -r cidr; do
+        [[ "$remote_vpn_subnet" == "$cidr" ]] && return 0
+    done < <(vpn_gateway_peer_split_cidrs "$remote_cidrs")
 
     if network_roadwarrior_enabled; then
         local_rw=$(network_roadwarrior_source_cidr)
@@ -428,7 +504,8 @@ function vpn_gateway_peer_remote_ts_extra_cidrs {
 function vpn_gateway_peer_local_ts {
     local nat=$1
     local nat_source=$2
-    local local_cidr=$3
+    local local_cidrs=$3
+    local include_rw_pool=${4:-yes}
     local -a cidrs=()
     local cidr
 
@@ -439,7 +516,7 @@ function vpn_gateway_peer_local_ts {
 
     while IFS= read -r cidr; do
         [[ -n $cidr ]] && cidrs+=("$cidr")
-    done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr")
+    done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidrs" "$include_rw_pool")
 
     local IFS=,
     echo "${cidrs[*]}"
@@ -513,7 +590,8 @@ function vpn_gateway_write_peer_conf {
         nat_source=$(vpn_gateway_resolve_nat_source "${peer_nat_source:-}") || return 1
     fi
 
-    local_ts=$(vpn_gateway_peer_local_ts "$peer_nat" "${nat_source:-}" "$peer_local_cidr")
+    local_ts=$(vpn_gateway_peer_local_ts "$peer_nat" "${nat_source:-}" "$peer_local_cidr" \
+        "$peer_include_rw_pool")
     remote_ts=$(vpn_gateway_peer_remote_ts "$peer_remote_nat" "${peer_remote_nat_source:-}" \
         "$peer_remote_cidr" "${peer_remote_peer_vpn_subnet:-}")
 
@@ -533,7 +611,7 @@ connections {
   ${conn_name} {
     version = 2
     encap = ${encap_mode}
-    send_certreq = yes
+    send_certreq = ${peer_send_certreq}
     local_addrs = ${local_addr}
     remote_addrs = ${peer_host}
     dpd_delay = 300s
@@ -642,33 +720,45 @@ table inet mycs_vpn_gateway {
 
         while IFS= read -r src_cidr; do
             [[ -n $src_cidr ]] || continue
-            cat << ---EOF >> "$nft_file"
-		ip saddr ${src_cidr} ip daddr ${remote_cidr} ct state new accept
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state new accept
 ---EOF
-        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr")
+            done < <(vpn_gateway_peer_split_cidrs "$remote_cidr")
+        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
 
         while IFS= read -r src_cidr; do
             [[ -n $src_cidr ]] || continue
-            cat << ---EOF >> "$nft_file"
-		ip saddr ${src_cidr} ip daddr ${local_cidr} ct state new accept
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state new accept
 ---EOF
+            done < <(vpn_gateway_peer_split_cidrs "$local_cidr")
         done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
             "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
 
-        while IFS= read -r src_cidr; do
-            [[ -n $src_cidr ]] || continue
-            cat << ---EOF >> "$nft_file"
-		ip saddr ${local_cidr} ip daddr ${src_cidr} ct state established,related accept
+        while IFS= read -r dst_cidr; do
+            [[ -n $dst_cidr ]] || continue
+            while IFS= read -r src_cidr; do
+                [[ -n $src_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${dst_cidr} ip daddr ${src_cidr} ct state established,related accept
 ---EOF
-        done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
-            "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
+            done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
+                "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
+        done < <(vpn_gateway_peer_split_cidrs "$local_cidr")
 
         while IFS= read -r src_cidr; do
             [[ -n $src_cidr ]] || continue
-            cat << ---EOF >> "$nft_file"
-		ip saddr ${src_cidr} ip daddr ${remote_cidr} ct state established,related accept
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state established,related accept
 ---EOF
-        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr")
+            done < <(vpn_gateway_peer_split_cidrs "$remote_cidr")
+        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
 
         while IFS= read -r src_cidr; do
             [[ -n $src_cidr ]] || continue
@@ -677,7 +767,7 @@ table inet mycs_vpn_gateway {
                 cat << ---EOF >> "$nft_file"
 		ip saddr ${dst_cidr} ip daddr ${src_cidr} ct state established,related accept
 ---EOF
-            done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr")
+            done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
         done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
             "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
     done
@@ -711,7 +801,7 @@ function vpn_gateway_clear_peer_postrouting {
 # Masquerade for LAN->DMZ is inserted at the head of ip mycs_nat postrouting.
 # Peer rules must be inserted before masquerade or IPsec traffic selectors won't match.
 function vpn_gateway_refresh_peer_postrouting {
-    local peer_file src_cidr nat_source
+    local peer_file src_cidr dst_cidr nat_source
 
     network_nft_ensure_init
     vpn_gateway_clear_peer_postrouting
@@ -723,15 +813,21 @@ function vpn_gateway_refresh_peer_postrouting {
             nat_source=$(vpn_gateway_resolve_nat_source "${peer_nat_source:-}") || return 1
             while IFS= read -r src_cidr; do
                 [[ -n $src_cidr ]] || continue
-                network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$peer_remote_cidr" \
-                    snat to "$nat_source" comment \"$VPN_GATEWAY_NAT_SNAT_COMMENT\"
-            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr")
+                while IFS= read -r dst_cidr; do
+                    [[ -n $dst_cidr ]] || continue
+                    network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$dst_cidr" \
+                        snat to "$nat_source" comment \"$VPN_GATEWAY_NAT_SNAT_COMMENT\"
+                done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
+            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
         else
             while IFS= read -r src_cidr; do
                 [[ -n $src_cidr ]] || continue
-                network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$peer_remote_cidr" \
-                    accept comment \"$VPN_GATEWAY_NAT_BYPASS_COMMENT\"
-            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr")
+                while IFS= read -r dst_cidr; do
+                    [[ -n $dst_cidr ]] || continue
+                    network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$dst_cidr" \
+                        accept comment \"$VPN_GATEWAY_NAT_BYPASS_COMMENT\"
+                done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
+            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
         fi
     done
     shopt -u nullglob
@@ -797,14 +893,17 @@ function vpn_gateway_refresh_docker_user_forward {
         while IFS= read -r cidr; do
             [[ -n $cidr ]] || continue
             network_docker_user_add_cidr s "$cidr"
-        done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr")
+        done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
         while IFS= read -r cidr; do
             [[ -n $cidr ]] || continue
             network_docker_user_add_cidr s "$cidr"
             network_docker_user_add_cidr d "$cidr"
         done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
             "${peer_remote_nat_source:-}" "$peer_remote_cidr" "${peer_remote_peer_vpn_subnet:-}")
-        network_docker_user_add_cidr d "$peer_remote_cidr"
+        while IFS= read -r cidr; do
+            [[ -n $cidr ]] || continue
+            network_docker_user_add_cidr d "$cidr"
+        done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
     done
     shopt -u nullglob
 }
