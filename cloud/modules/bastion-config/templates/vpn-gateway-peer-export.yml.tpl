@@ -18,7 +18,8 @@ auth: cert
 # On the RECEIVING site: uncomment remote_nat: yes when this remote peer uses NAT.
 #   remote_nat_source is set from this export (this bastion's gateway admin IP).
 # remote_dns_server and remote_local_zone configure DNSDist to forward this peer's
-#   .local zone to the remote bastion DNS (admin IP :53).
+#   zone(s) to the remote DNS. remote_dns_server may list primary,backup (comma/
+#   space-separated) for firstAvailable failover.
 #
 # nat:
 # nat_source:

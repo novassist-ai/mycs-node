@@ -367,7 +367,7 @@ Cross-site DNS depends on **both** bastions having the peer configured and IPsec
 2. `manage_vpn_gateway_peer add <peer.yaml>` on bastion B
 3. If peer-zone lookups still fail on either side, run `manage_vpn_gateway_peer apply` on both
 
-Peer DNS downstreams use `healthCheckMode='auto'` with SOA probes for `ns1.<remote_local_zone>.`, `mustResolve=true`, and `reconnectOnUp=true`. A background recheck (`/var/log/vpn-gateway-dnsdist-recheck.log`) restarts dnsdist when the remote resolver becomes reachable after the other site is configured or after bastion restart.
+Peer DNS downstreams use `healthCheckMode='auto'` with SOA probes for `ns1.<remote_local_zone>.`, `mustResolve=true`, and `reconnectOnUp=true`. `remote_dns_server` accepts a comma- or space-separated list; the first address is primary and later addresses go in a `_backup` pool. Failover uses `PoolAvailableRule` (primary while healthy, else backup). A background recheck (`/var/log/vpn-gateway-dnsdist-recheck.log`) restarts dnsdist when the remote resolver becomes reachable after the other site is configured or after bastion restart.
 
 ---
 
@@ -381,10 +381,12 @@ Peer DNS downstreams use `healthCheckMode='auto'` with SOA probes for `ns1.<remo
 # remote_nat: yes
 remote_nat_source: <exporter admin IP>
 remote_dns_server: <exporter admin IP>:53
+# or primary + backup (firstAvailable failover):
+# remote_dns_server: 155.231.231.2:53, 155.231.231.3:53
 remote_local_zone: test-us-east-1.local
 ```
 
-On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block). Each peer downstream uses active SOA health checks (`healthCheckMode='auto'`, `checkName='ns1.<zone>.'`, `reconnectOnUp=true`). dnsdist is restarted after strongSwan and peer initiation; `cloud-inceptor-vpn-gateway-dnsdist.service` repeats that on boot when peer YAML exists. Rules must appear **before** local zone and recursion actions.
+On import, `manage_vpn_gateway_peer add` writes DNSDist rules into `/etc/dnsdist/dnsdist.conf` (managed block). Each peer downstream uses active SOA health checks (`healthCheckMode='auto'`, `checkName='ns1.<zone>.'`, `reconnectOnUp=true`). Multiple `remote_dns_server` addresses become a primary pool plus a `_backup` pool with `PoolAvailableRule` failover. dnsdist is restarted after strongSwan and peer initiation; `cloud-inceptor-vpn-gateway-dnsdist.service` repeats that on boot when peer YAML exists. Rules must appear **before** local zone and recursion actions.
 
 On the **exporting** site: `vpn_gateway.nat` is set via Terraform; uncomment `nat:` in peer YAML only to override. `nat_source` defaults to the admin interface. On the **importing** site: uncomment `remote_nat: yes` when the remote uses NAT; `remote_nat_source`, `remote_dns_server`, and `remote_local_zone` are provided by the export.
 

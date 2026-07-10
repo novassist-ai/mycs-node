@@ -114,6 +114,9 @@ module "bootstrap" {
 
   smtp_relay_port    = var.smtp_relay_port
   smtp_relay_api_key = var.smtp_relay_api_key
+
+  # Jumpbox
+  deploy_jumpbox = var.deploy_jumpbox
 }
 
 #

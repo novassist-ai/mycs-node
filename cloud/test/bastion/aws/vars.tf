@@ -42,6 +42,13 @@ variable "bastion_image_owner" {
 }
 
 #
+# Jumpbox
+#
+variable "deploy_jumpbox" {
+  default = true
+}
+
+#
 # Networking
 #
 

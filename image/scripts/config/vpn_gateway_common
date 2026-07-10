@@ -44,6 +44,30 @@ function vpn_gateway_peer_split_cidrs {
     done
 }
 
+# Normalize a DNS backend address to host:port (default port 53).
+function vpn_gateway_peer_normalize_dns_server {
+    local server=$1
+
+    server=$(vpn_gateway_peer_strip_field "$server")
+    [[ -n $server ]] || return 0
+    if [[ $server != *:* ]]; then
+        server="${server}:53"
+    fi
+    printf '%s\n' "$server"
+}
+
+# Emit peer remote_dns_server entries (comma/space-separated) as host:port lines.
+function vpn_gateway_peer_split_dns_servers {
+    local raw=$1
+    local token server
+
+    while IFS= read -r token; do
+        [[ -n $token ]] || continue
+        server=$(vpn_gateway_peer_normalize_dns_server "$token")
+        [[ -n $server ]] && echo "$server"
+    done < <(vpn_gateway_peer_split_cidrs "$raw")
+}
+
 function vpn_gateway_peer_resolve_send_certreq {
     local peer_file=$1
     local peer_auth=$2
@@ -1003,7 +1027,7 @@ function vpn_gateway_all_peer_zones_resolve_locally {
 }
 
 function vpn_gateway_any_peer_dns_remote_reachable {
-    local peer_file zone
+    local peer_file zone dns_server
 
     shopt -s nullglob
     for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
@@ -1012,10 +1036,13 @@ function vpn_gateway_any_peer_dns_remote_reachable {
             continue
         fi
         for zone in $peer_remote_local_zone; do
-            if vpn_gateway_peer_dns_remote_reachable "$peer_remote_dns_server" "$zone"; then
-                shopt -u nullglob
-                return 0
-            fi
+            while IFS= read -r dns_server; do
+                [[ -n $dns_server ]] || continue
+                if vpn_gateway_peer_dns_remote_reachable "$dns_server" "$zone"; then
+                    shopt -u nullglob
+                    return 0
+                fi
+            done < <(vpn_gateway_peer_split_dns_servers "$peer_remote_dns_server")
         done
     done
     shopt -u nullglob
@@ -1108,6 +1135,7 @@ function vpn_gateway_boot_dnsdist_apply {
 
 function vpn_gateway_regenerate_dnsdist_peer_rules {
     local peer_file safe_name pool zone rules_file tmp
+    local peer_check_zone dns_server dns_order dns_rules server_pool
 
     if ! vpn_gateway_dnsdist_available; then
         return 0
@@ -1117,20 +1145,42 @@ function vpn_gateway_regenerate_dnsdist_peer_rules {
     shopt -s nullglob
     for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
         vpn_gateway_peer_load "$peer_file" || return 1
-        if [[ -z ${peer_remote_dns_server:-} || -z ${peer_remote_local_zone:-} ]]; then
-            continue
+        if [[ -n ${peer_remote_dns_server:-} && -n ${peer_remote_local_zone:-} ]]; then
+            safe_name=$(vpn_gateway_sanitize_name "$peer_name")
+            pool="recursor_${safe_name}"
+            peer_check_zone=${peer_remote_local_zone%% *}
+            dns_order=0
+            dns_rules=$(mktemp)
+            while IFS= read -r dns_server; do
+                if [[ -n $dns_server ]]; then
+                    dns_order=$((dns_order + 1))
+                    if [[ $dns_order -eq 1 ]]; then
+                        server_pool=$pool
+                    else
+                        server_pool="${pool}_backup"
+                    fi
+                    echo "newServer({address='${dns_server}', pool='${server_pool}', healthCheckMode='auto', checkName='ns1.${peer_check_zone}.', checkType='SOA', mustResolve=true, checkInterval=10, checkTimeout=2000, maxCheckFailures=3, rise=2, reconnectOnUp=true})" >> "$dns_rules"
+                fi
+            done < <(vpn_gateway_peer_split_dns_servers "$peer_remote_dns_server")
+            if [[ $dns_order -gt 0 ]]; then
+                {
+                    cat "$dns_rules"
+                    echo "smn = newSuffixMatchNode()"
+                    for zone in $peer_remote_local_zone; do
+                        echo "smn:add('${zone}')"
+                    done
+                    if [[ $dns_order -eq 1 ]]; then
+                        echo "addAction(SuffixMatchNodeRule(smn), PoolAction('${pool}'))"
+                    else
+                        # Primary pool first while healthy; otherwise fail over to backup pool.
+                        # (Avoid ServerPool:setServerPolicy — not available on all dnsdist builds.)
+                        echo "addAction(AndRule({SuffixMatchNodeRule(smn), PoolAvailableRule('${pool}')}), PoolAction('${pool}'))"
+                        echo "addAction(SuffixMatchNodeRule(smn), PoolAction('${pool}_backup'))"
+                    fi
+                } >> "$rules_file"
+            fi
+            rm -f "$dns_rules"
         fi
-        safe_name=$(vpn_gateway_sanitize_name "$peer_name")
-        pool="recursor_${safe_name}"
-        peer_check_zone=${peer_remote_local_zone%% *}
-        {
-            echo "newServer({address='${peer_remote_dns_server}', pool='${pool}', healthCheckMode='auto', checkName='ns1.${peer_check_zone}.', checkType='SOA', mustResolve=true, checkInterval=10, checkTimeout=2000, maxCheckFailures=3, rise=2, reconnectOnUp=true})"
-            echo "smn = newSuffixMatchNode()"
-            for zone in $peer_remote_local_zone; do
-                echo "smn:add('${zone}')"
-            done
-            echo "addAction(SuffixMatchNodeRule(smn), PoolAction('${pool}'))"
-        } >> "$rules_file"
     done
     shopt -u nullglob
 
