@@ -3,7 +3,7 @@
 #
 
 module "bootstrap" {
-  source = "github.com/novassist-ai/mycs-node.git/cloud/modules/aws?ref=dev"
+  source = "github.com/novassist-ai/mycs-node.git//cloud/modules/bootstrap/aws?ref=dev"
 
   #
   # Company information used in certificate creation
