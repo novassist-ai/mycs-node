@@ -19,13 +19,18 @@ on:
       - "apps/clients/node-builder/**"
       - "cloud/cookbook/**"
       - "libs/shared/app/golang/**"
+      - ".github/workflows/build-node-builder-prod.yml"
 
-# Smoke build only for now; Part B will push to GHCR as :latest and :version
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: novassist-ai/node-builder
+
 permissions:
   contents: read
+  packages: write
 
 jobs:
-  build-and-smoke:
+  build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -48,7 +53,7 @@ jobs:
           echo "name=${name}" >> "$GITHUB_OUTPUT"
           echo "Resolved bastion image: ${name}"
 
-      - name: Resolve image tag
+      - name: Resolve image tags
         id: tag
         run: |
           tag="${{ inputs.image_tag }}"
@@ -57,24 +62,51 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+          repo="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          tags="${repo}:latest"
+          if [[ "${tag}" != "latest" ]]; then
+            tags="${tags}"$'\n'"${repo}:${tag}"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "smoke=${repo}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/clients/node-builder/Dockerfile
-          push: false
-          load: true
-          tags: node-builder:${{ steps.tag.outputs.tag }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tag.outputs.tags }}
           build-args: |
             env=prod
             version=${{ steps.tag.outputs.tag }}
             bastion_image_name=${{ steps.bastion.outputs.name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=MyCS node-builder CLI (prod)
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
 
       - name: Smoke test
         run: |
-          docker run --rm "node-builder:${{ steps.tag.outputs.tag }}" --version
-          docker run --rm "node-builder:${{ steps.tag.outputs.tag }}" --help
-          docker run --rm "node-builder:${{ steps.tag.outputs.tag }}" doctor
+          docker pull "${{ steps.tag.outputs.smoke }}"
+          docker run --rm "${{ steps.tag.outputs.smoke }}" --version
+          docker run --rm "${{ steps.tag.outputs.smoke }}" --help
+          docker run --rm "${{ steps.tag.outputs.smoke }}" doctor

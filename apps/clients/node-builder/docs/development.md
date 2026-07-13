@@ -104,8 +104,10 @@ Resolve bastion image name:
 ./apps/clients/node-builder/scripts/get-cloud-image.sh prod   # → latest mycs-bastion_X.Y.Z
 ```
 
-CI: `.github/workflows/build-node-builder-dev.yml` (branch `dev`) and
-`build-node-builder-prod.yml` (branch `main`) build and smoke-test on push / dispatch.
+CI: `.github/workflows/build-node-builder-dev.yml` (branch `dev`, pushes
+`ghcr.io/novassist-ai/node-builder:dev`) and `build-node-builder-prod.yml`
+(branch `main`, pushes `:latest` and optional `:0.0.N`). PRs to `dev` build and
+smoke only (no push).
 
 ---
 
