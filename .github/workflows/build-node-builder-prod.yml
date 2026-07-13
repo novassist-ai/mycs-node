@@ -1,0 +1,112 @@
+name: Build node-builder (prod)
+concurrency: node-builder-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      bastion_image_name:
+        description: Bastion AMI name to bake in (default = latest mycs-bastion_X.Y.Z)
+        required: false
+        type: string
+      image_tag:
+        description: Docker image tag (default = latest; bastion dispatch passes 0.0.N)
+        required: false
+        default: latest
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "apps/clients/node-builder/**"
+      - "cloud/cookbook/**"
+      - "libs/shared/app/golang/**"
+      - ".github/workflows/build-node-builder-prod.yml"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: novassist-ai/node-builder
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve bastion image name
+        id: bastion
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          INPUT_BASTION: ${{ inputs.bastion_image_name }}
+        run: |
+          if [[ -n "${INPUT_BASTION}" ]]; then
+            name="${INPUT_BASTION}"
+          else
+            name=$(bash apps/clients/node-builder/scripts/get-cloud-image.sh prod)
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "Resolved bastion image: ${name}"
+
+      - name: Resolve image tags
+        id: tag
+        run: |
+          tag="${{ inputs.image_tag }}"
+          if [[ -z "${tag}" ]]; then
+            tag=latest
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          repo="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          tags="${repo}:latest"
+          if [[ "${tag}" != "latest" ]]; then
+            tags="${tags}"$'\n'"${repo}:${tag}"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "smoke=${repo}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/clients/node-builder/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tag.outputs.tags }}
+          build-args: |
+            env=prod
+            version=${{ steps.tag.outputs.tag }}
+            bastion_image_name=${{ steps.bastion.outputs.name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=MyCS node-builder CLI (prod)
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
+
+      - name: Smoke test
+        run: |
+          docker pull "${{ steps.tag.outputs.smoke }}"
+          docker run --rm "${{ steps.tag.outputs.smoke }}" --version
+          docker run --rm "${{ steps.tag.outputs.smoke }}" --help
+          docker run --rm "${{ steps.tag.outputs.smoke }}" doctor

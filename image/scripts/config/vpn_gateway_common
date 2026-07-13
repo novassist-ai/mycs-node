@@ -1,0 +1,1406 @@
+#!/bin/bash
+#
+# VPN gateway peer library (site-to-site IPsec via strongSwan swanctl).
+# Peers are defined in /data/strongswan/peers/<name>.yaml and applied at runtime
+# without rebuilding the bastion image.
+#
+
+[[ -v VPN_GATEWAY_COMMON_LOADED ]] && return 0
+VPN_GATEWAY_COMMON_LOADED=1
+
+VPN_GATEWAY_PEERS_DIR=${VPN_GATEWAY_PEERS_DIR:-/data/strongswan/peers}
+VPN_GATEWAY_BOOTSTRAP_PEERS_DIR=${VPN_GATEWAY_BOOTSTRAP_PEERS_DIR:-/usr/local/etc/vpn-gw-peers}
+VPN_GATEWAY_NFT_CONF=${VPN_GATEWAY_NFT_CONF:-/data/network/etc/vpn-gateway-peers.nft}
+VPN_GATEWAY_DNSDIST_CONF=${VPN_GATEWAY_DNSDIST_CONF:-/etc/dnsdist/dnsdist.conf}
+VPN_GATEWAY_DNSDIST_BEGIN='-- BEGIN VPN gateway peer DNS (managed by manage_vpn_gateway_peer)'
+VPN_GATEWAY_DNSDIST_END='-- END VPN gateway peer DNS'
+VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE=${VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE:-/var/run/vpn-gateway-dnsdist-recheck.pid}
+VPN_GATEWAY_DNSDIST_RECHECK_LOG=${VPN_GATEWAY_DNSDIST_RECHECK_LOG:-/var/log/vpn-gateway-dnsdist-recheck.log}
+
+function vpn_gateway_peers_configured {
+    network_vpn_gateway_enabled && return 0
+    [[ -d $VPN_GATEWAY_PEERS_DIR ]] || return 1
+    compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        || compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1
+}
+
+function vpn_gateway_sanitize_name {
+    # printf avoids echo's trailing newline, which tr -c would turn into '_'
+    printf '%s' "$1" | tr -d '\r' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9._-' '_'
+}
+
+function vpn_gateway_peer_strip_field {
+    printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+function vpn_gateway_peer_split_cidrs {
+    local raw=$1
+    local cidr token
+
+    raw=$(printf '%s' "$raw" | tr ',' ' ')
+    for token in $raw; do
+        cidr=$(vpn_gateway_peer_strip_field "$token")
+        [[ -n $cidr ]] && echo "$cidr"
+    done
+}
+
+# Normalize a DNS backend address to host:port (default port 53).
+function vpn_gateway_peer_normalize_dns_server {
+    local server=$1
+
+    server=$(vpn_gateway_peer_strip_field "$server")
+    [[ -n $server ]] || return 0
+    if [[ $server != *:* ]]; then
+        server="${server}:53"
+    fi
+    printf '%s\n' "$server"
+}
+
+# Emit peer remote_dns_server entries (comma/space-separated) as host:port lines.
+function vpn_gateway_peer_split_dns_servers {
+    local raw=$1
+    local token server
+
+    while IFS= read -r token; do
+        [[ -n $token ]] || continue
+        server=$(vpn_gateway_peer_normalize_dns_server "$token")
+        [[ -n $server ]] && echo "$server"
+    done < <(vpn_gateway_peer_split_cidrs "$raw")
+}
+
+function vpn_gateway_peer_resolve_send_certreq {
+    local peer_file=$1
+    local peer_auth=$2
+    local peer_value=$3
+
+    if grep -Eq '^send_certreq:[[:space:]]*' "$peer_file"; then
+        case "$peer_value" in
+            yes|no) echo "$peer_value" ;;
+            *)
+                echo "ERROR! peer $peer_file send_certreq must be yes or no" >&2
+                return 1
+                ;;
+        esac
+        return 0
+    fi
+
+    if [[ "$peer_auth" == cert ]]; then
+        echo yes
+    else
+        echo no
+    fi
+}
+
+function vpn_gateway_peer_resolve_include_rw_pool {
+    local peer_file=$1
+    local peer_value=$2
+
+    if grep -Eq '^include_rw_pool:[[:space:]]*' "$peer_file"; then
+        case "$peer_value" in
+            yes|no) echo "$peer_value" ;;
+            *)
+                echo "ERROR! peer $peer_file include_rw_pool must be yes or no" >&2
+                return 1
+                ;;
+        esac
+        return 0
+    fi
+
+    echo yes
+}
+
+function vpn_gateway_peer_read_block_scalar {
+    local peer_file=$1
+    local key=$2
+
+    awk -v key="$key" '
+        $0 ~ "^" key ":[[:space:]]*\\|" { capture = 1; next }
+        capture {
+            if ($0 ~ /^[^[:space:]]/ && $0 !~ /^---/) {
+                exit
+            }
+            if ($0 ~ /^[[:space:]]/) {
+                sub(/^[[:space:]]+/, "", $0)
+                sub(/\r$/, "", $0)
+                print
+            } else if ($0 == "") {
+                print
+            }
+        }
+    ' "$peer_file"
+}
+
+function vpn_gateway_normalize_pem {
+    sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/\r$//' | awk 'NF'
+}
+
+function vpn_gateway_validate_pem {
+    local pem=$1
+    local label=${2:-certificate}
+
+    [[ -n $pem ]] || return 1
+    [[ "$pem" =~ -----BEGIN[[:space:]]CERTIFICATE----- ]] || return 1
+
+    if command -v openssl >/dev/null 2>&1; then
+        printf '%s\n' "$pem" | openssl x509 -noout >/dev/null 2>&1 || {
+            echo "ERROR! $label is not a valid X509 PEM certificate" >&2
+            return 1
+        }
+    fi
+}
+
+function vpn_gateway_peer_cleanup_stale_files {
+    local safe_name=$1
+    local peer_file
+
+    [[ -n $safe_name ]] || return 0
+
+    rm -f "$VPN_GATEWAY_PEERS_DIR/${safe_name}_.yaml" \
+        "$VPN_GATEWAY_PEERS_DIR/${safe_name}_.yml"
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*_.yaml "$VPN_GATEWAY_PEERS_DIR"/*_.yml; do
+        rm -f "$peer_file"
+    done
+    rm -f "$STRONGSWAN_DATA_HOME/etc/conf.d/peer-${safe_name}_.conf"
+    rm -f "$STRONGSWAN_DATA_HOME/etc/conf.d"/peer-*_.conf
+    shopt -u nullglob
+}
+
+function vpn_gateway_peer_load_remote_ca {
+    local peer_file=$1
+
+    [[ "$peer_auth" == cert ]] || return 0
+
+    case "${peer_remote_ca_pem:-}" in
+        '|'|'>'|'') peer_remote_ca_pem= ;;
+    esac
+
+    if [[ -z "${peer_remote_ca_pem:-}" ]] \
+        && grep -Eq '^remote_ca_pem:[[:space:]]*\|' "$peer_file"; then
+        peer_remote_ca_pem=$(vpn_gateway_peer_read_block_scalar "$peer_file" "remote_ca_pem")
+    fi
+
+    if [[ -z "${peer_remote_ca_pem:-}" && -n "${peer_remote_ca_file:-}" && -f "$peer_remote_ca_file" ]]; then
+        peer_remote_ca_pem=$(<"$peer_remote_ca_file")
+    fi
+
+    if [[ -n "${peer_remote_ca_pem:-}" ]]; then
+        peer_remote_ca_pem=$(printf '%s\n' "$peer_remote_ca_pem" | vpn_gateway_normalize_pem)
+        vpn_gateway_validate_pem "$peer_remote_ca_pem" "peer $peer_file remote_ca_pem" || return 1
+    fi
+
+    if [[ "$peer_auth" == cert && -z "${peer_remote_ca_pem:-}" \
+        && ! -f "$STRONGSWAN_DATA_HOME/x509ca/$peer_remote_ca" ]]; then
+        echo "ERROR! peer $peer_file auth=cert requires remote_ca_pem, remote_ca_file, or an existing CA at $STRONGSWAN_DATA_HOME/x509ca/$peer_remote_ca" >&2
+        return 1
+    fi
+}
+
+# Per-peer nat overrides vpn_gateway.nat in config.yml when the peer file omits nat:.
+function vpn_gateway_peer_resolve_nat {
+    local peer_file=$1
+    local peer_nat_value=$2
+
+    if grep -Eq '^nat:[[:space:]]*' "$peer_file"; then
+        echo "$peer_nat_value"
+        return 0
+    fi
+
+    echo "${config_vpn_gateway_nat:-no}"
+}
+
+function vpn_gateway_peer_load {
+    local peer_file=$1
+
+    unset peer_name peer_host peer_remote_id peer_local_cidr peer_remote_cidr \
+        peer_remote_peer_vpn_subnet peer_nat peer_nat_source peer_remote_nat \
+        peer_remote_nat_source peer_remote_dns_server peer_remote_local_zone \
+        peer_auth peer_psk peer_send_certreq peer_include_rw_pool \
+        peer_remote_ca peer_remote_ca_pem peer_remote_ca_file peer_auto peer_nat_t \
+        peer_ike_encryption peer_ike_integrity peer_ike_dh_group peer_ike_lifetime \
+        peer_ike_proposals peer_ipsec_encryption peer_ipsec_integrity \
+        peer_ipsec_dh_group peer_ipsec_lifetime peer_esp_proposals
+
+    [[ -f $peer_file ]] || {
+        echo "ERROR! peer file not found: $peer_file" >&2
+        return 1
+    }
+
+    eval "$(parse_yaml "$peer_file" "peer_")"
+
+    peer_name=$(vpn_gateway_peer_strip_field "${peer_name:-}")
+    peer_host=$(vpn_gateway_peer_strip_field "${peer_host:-}")
+    peer_remote_id=$(vpn_gateway_peer_strip_field "${peer_remote_id:-}")
+    peer_local_cidr=$(vpn_gateway_peer_strip_field "${peer_local_cidr:-}")
+    peer_remote_cidr=$(vpn_gateway_peer_strip_field "${peer_remote_cidr:-}")
+    peer_remote_peer_vpn_subnet=$(vpn_gateway_peer_strip_field "${peer_remote_peer_vpn_subnet:-}")
+    peer_nat=$(vpn_gateway_peer_strip_field "${peer_nat:-}")
+    peer_nat_source=$(vpn_gateway_peer_strip_field "${peer_nat_source:-}")
+    peer_remote_nat=$(vpn_gateway_peer_strip_field "${peer_remote_nat:-}")
+    peer_remote_nat_source=$(vpn_gateway_peer_strip_field "${peer_remote_nat_source:-}")
+    peer_remote_dns_server=$(vpn_gateway_peer_strip_field "${peer_remote_dns_server:-}")
+    peer_remote_local_zone=$(vpn_gateway_peer_strip_field "${peer_remote_local_zone:-}")
+    peer_auth=$(vpn_gateway_peer_strip_field "${peer_auth:-}")
+    peer_send_certreq=$(vpn_gateway_peer_strip_field "${peer_send_certreq:-}")
+    peer_include_rw_pool=$(vpn_gateway_peer_strip_field "${peer_include_rw_pool:-}")
+    peer_remote_ca=$(vpn_gateway_peer_strip_field "${peer_remote_ca:-}")
+    peer_remote_ca_file=$(vpn_gateway_peer_strip_field "${peer_remote_ca_file:-}")
+
+    [[ -n ${peer_name:-} ]] || peer_name=$(basename "$peer_file" .yaml)
+    peer_name=${peer_name%.yml}
+    : "${peer_remote_id:=$peer_host}"
+    peer_nat=$(vpn_gateway_peer_resolve_nat "$peer_file" "$peer_nat")
+    : "${peer_remote_nat:=no}"
+    : "${peer_auth:=cert}"
+    : "${peer_remote_ca:=upstream_ca.pem}"
+    : "${peer_nat_t:=yes}"
+
+    vpn_gateway_peer_load_remote_ca "$peer_file" || return 1
+
+    if [[ -z $peer_local_cidr ]]; then
+        peer_local_cidr="${config_vpn_gateway_local_cidr:-}"
+    fi
+
+    local key
+    for key in peer_name peer_host peer_remote_cidr peer_auth; do
+        [[ -n ${!key} ]] || {
+            echo "ERROR! peer $peer_file missing required key: ${key#peer_}" >&2
+            return 1
+        }
+    done
+
+    [[ -n $peer_local_cidr ]] || {
+        echo "ERROR! peer $peer_file missing local_cidr (set in peer YAML or vpn_gateway.local_cidr in /etc/mycs/config.yml)" >&2
+        return 1
+    }
+
+    case "$peer_nat" in
+        yes|no) ;;
+        *)
+            echo "ERROR! peer $peer_file nat must be yes or no" >&2
+            return 1
+            ;;
+    esac
+
+    case "$peer_remote_nat" in
+        yes|no) ;;
+        *)
+            echo "ERROR! peer $peer_file remote_nat must be yes or no" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ "$peer_remote_nat" == yes && -z $peer_remote_nat_source ]]; then
+        echo "ERROR! peer $peer_file remote_nat=yes requires remote_nat_source" >&2
+        return 1
+    fi
+
+    case "$peer_auth" in
+        psk|cert) ;;
+        *)
+            echo "ERROR! peer $peer_file auth must be psk or cert" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ "$peer_auth" == psk && -z "${peer_psk:-}" ]]; then
+        echo "ERROR! peer $peer_file auth=psk requires psk" >&2
+        return 1
+    fi
+
+    peer_send_certreq=$(vpn_gateway_peer_resolve_send_certreq \
+        "$peer_file" "$peer_auth" "$peer_send_certreq") || return 1
+    peer_include_rw_pool=$(vpn_gateway_peer_resolve_include_rw_pool \
+        "$peer_file" "$peer_include_rw_pool") || return 1
+
+    vpn_gateway_validate_peer_crypto "$peer_file" || return 1
+}
+
+function vpn_gateway_global_local_id {
+    local server_cn
+
+    if [[ -n "${config_vpn_gateway_local_id:-}" ]]; then
+        echo "$config_vpn_gateway_local_id"
+        return 0
+    fi
+
+    server_cn=$(ssl_cert_subject_cn /etc/ssl/certs/bastion_cert.pem)
+    [[ -n $server_cn ]] || server_cn=${config_vpn_vpn_cert_cn:-}
+    echo "$server_cn"
+}
+
+function vpn_gateway_global_local_addr {
+    if [[ -n "${config_vpn_gateway_local_addr:-}" ]]; then
+        echo "$config_vpn_gateway_local_addr"
+    elif [[ -n "${config_server_dmz_itf_ip:-}" ]]; then
+        echo "$config_server_dmz_itf_ip"
+    else
+        echo "%any"
+    fi
+}
+
+function vpn_gateway_resolve_dh_group {
+    local group=${1:-14}
+
+    case "$group" in
+        1|modp768) echo modp768 ;;
+        2|modp1024) echo modp1024 ;;
+        5|modp1536) echo modp1536 ;;
+        14|modp2048) echo modp2048 ;;
+        15|modp3072) echo modp3072 ;;
+        16|modp4096) echo modp4096 ;;
+        19|ecp256) echo ecp256 ;;
+        20|ecp384) echo ecp384 ;;
+        21|ecp521) echo ecp521 ;;
+        *)
+            echo "ERROR! Unsupported vpn_gateway DH group: $group" >&2
+            return 1
+            ;;
+    esac
+}
+
+function vpn_gateway_build_ike_proposals {
+    local enc=${1:-${config_vpn_gateway_ike_encryption:-aes256}}
+    local int=${2:-${config_vpn_gateway_ike_integrity:-sha256}}
+    local dh_group=${3:-${config_vpn_gateway_ike_dh_group:-14}}
+    local override=${4:-}
+
+    if [[ -n $override ]]; then
+        echo "$override"
+        return 0
+    fi
+
+    local dh
+    dh=$(vpn_gateway_resolve_dh_group "$dh_group") || return 1
+    echo "${enc}-${int}-prf${int}-${dh}"
+}
+
+function vpn_gateway_build_esp_proposals {
+    local enc=${1:-${config_vpn_gateway_ipsec_encryption:-aes256}}
+    local int=${2:-${config_vpn_gateway_ipsec_integrity:-sha256}}
+    local dh_group=${3:-${config_vpn_gateway_ipsec_dh_group:-14}}
+    local override=${4:-}
+
+    if [[ -n $override ]]; then
+        echo "$override"
+        return 0
+    fi
+
+    local dh
+    dh=$(vpn_gateway_resolve_dh_group "$dh_group") || return 1
+    echo "${enc}-${int}-${dh}"
+}
+
+function vpn_gateway_validate_peer_crypto {
+    local peer_file=$1
+    local lifetime_key lifetime_val
+
+    if [[ -n "${peer_nat_t:-}" ]]; then
+        case "$peer_nat_t" in
+            yes|no) ;;
+            *)
+                echo "ERROR! peer $peer_file nat_t must be yes or no (NAT-T / UDP encap)" >&2
+                return 1
+                ;;
+        esac
+    fi
+
+    if [[ -n "${peer_ike_dh_group:-}" ]]; then
+        vpn_gateway_resolve_dh_group "$peer_ike_dh_group" || return 1
+    fi
+
+    if [[ -n "${peer_ipsec_dh_group:-}" ]]; then
+        vpn_gateway_resolve_dh_group "$peer_ipsec_dh_group" || return 1
+    fi
+
+    for lifetime_key in peer_ike_lifetime peer_ipsec_lifetime; do
+        lifetime_val=${!lifetime_key}
+        if [[ -n $lifetime_val && ! $lifetime_val =~ ^[0-9]+$ ]]; then
+            echo "ERROR! peer $peer_file ${lifetime_key#peer_} must be a positive integer (seconds)" >&2
+            return 1
+        fi
+    done
+}
+
+function vpn_gateway_resolve_start_action {
+    local auto_override=${1:-}
+
+    if [[ -n $auto_override ]]; then
+        echo "$auto_override"
+        return 0
+    fi
+
+    echo "${config_vpn_gateway_auto:-start}"
+}
+
+function vpn_gateway_resolve_nat_t {
+    local peer_nat_t=${1:-yes}
+
+    if [[ "$peer_nat_t" == yes ]]; then
+        echo yes
+    else
+        echo no
+    fi
+}
+
+function vpn_gateway_resolve_nat_source {
+    local explicit=${1:-}
+
+    if [[ -n $explicit ]]; then
+        echo "$explicit"
+        return 0
+    fi
+
+    if [[ -n "${config_server_admin_itf_ip:-}" ]]; then
+        echo "$config_server_admin_itf_ip"
+        return 0
+    fi
+
+    echo "ERROR! nat=yes requires nat_source in peer YAML or server.admin_itf_ip in config.yml" >&2
+    return 1
+}
+
+# Local source CIDRs that may forward into a peer tunnel (admin + optional road-warrior).
+function vpn_gateway_peer_local_forward_cidrs {
+    local local_cidrs=$1
+    local include_rw_pool=${2:-yes}
+    local cidr vpn_cidr
+
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && echo "$cidr"
+    done < <(vpn_gateway_peer_split_cidrs "$local_cidrs")
+
+    [[ "$include_rw_pool" == yes ]] || return 0
+    network_roadwarrior_enabled || return 0
+    vpn_cidr=$(network_roadwarrior_source_cidr)
+    [[ -n $vpn_cidr ]] || return 0
+
+    while IFS= read -r cidr; do
+        [[ "$cidr" == "$vpn_cidr" ]] && return 0
+    done < <(vpn_gateway_peer_split_cidrs "$local_cidrs")
+    echo "$vpn_cidr"
+}
+
+# Remote source CIDRs for nft forward / return-path rules.
+function vpn_gateway_peer_remote_forward_cidrs {
+    local remote_nat=$1
+    local remote_nat_source=$2
+    local remote_cidr=$3
+    local remote_vpn_subnet=$4
+
+    if [[ "$remote_nat" == yes ]]; then
+        echo "$remote_nat_source"
+        return 0
+    fi
+
+    vpn_gateway_peer_remote_ts_extra_cidrs "$remote_cidr" "$remote_vpn_subnet"
+}
+
+# Extra remote CIDRs appended to remote_ts (road-warrior pool, with shared-pool guard).
+function vpn_gateway_peer_remote_ts_extra_cidrs {
+    local remote_cidrs=$1
+    local remote_vpn_subnet=$2
+    local cidr local_rw
+
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && echo "$cidr"
+    done < <(vpn_gateway_peer_split_cidrs "$remote_cidrs")
+
+    if [[ -z $remote_vpn_subnet ]]; then
+        return 0
+    fi
+
+    while IFS= read -r cidr; do
+        [[ "$remote_vpn_subnet" == "$cidr" ]] && return 0
+    done < <(vpn_gateway_peer_split_cidrs "$remote_cidrs")
+
+    if network_roadwarrior_enabled; then
+        local_rw=$(network_roadwarrior_source_cidr)
+        if [[ -n $local_rw && "$remote_vpn_subnet" == "$local_rw" ]]; then
+            echo "WARNING! peer remote_peer_vpn_subnet ${remote_vpn_subnet} equals local road-warrior subnet; omitting from remote_ts (site-to-site must not claim the local VPN pool)" >&2
+            return 0
+        fi
+    fi
+    echo "$remote_vpn_subnet"
+}
+
+function vpn_gateway_peer_local_ts {
+    local nat=$1
+    local nat_source=$2
+    local local_cidrs=$3
+    local include_rw_pool=${4:-yes}
+    local -a cidrs=()
+    local cidr
+
+    if [[ "$nat" == yes ]]; then
+        echo "${nat_source}/32"
+        return 0
+    fi
+
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && cidrs+=("$cidr")
+    done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidrs" "$include_rw_pool")
+
+    local IFS=,
+    echo "${cidrs[*]}"
+}
+
+function vpn_gateway_peer_remote_ts {
+    local remote_nat=$1
+    local remote_nat_source=$2
+    local remote_cidr=$3
+    local remote_vpn_subnet=$4
+    local -a cidrs=()
+    local cidr
+
+    if [[ "$remote_nat" == yes ]]; then
+        echo "${remote_nat_source}/32"
+        return 0
+    fi
+
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] && cidrs+=("$cidr")
+    done < <(vpn_gateway_peer_remote_ts_extra_cidrs "$remote_cidr" "$remote_vpn_subnet")
+
+    local IFS=,
+    echo "${cidrs[*]}"
+}
+
+function vpn_gateway_stage_peer_ca {
+    local remote_ca=$1
+    local remote_ca_pem=$2
+    local dest normalized
+
+    [[ -n $remote_ca_pem ]] || return 0
+
+    normalized=$(printf '%s\n' "$remote_ca_pem" | vpn_gateway_normalize_pem)
+    vpn_gateway_validate_pem "$normalized" "remote CA $remote_ca" || return 1
+
+    dest="$STRONGSWAN_DATA_HOME/x509ca/$remote_ca"
+    install -D -m 644 /dev/null "$dest"
+    printf '%s\n' "$normalized" > "$dest"
+}
+
+function vpn_gateway_write_peer_conf {
+    local peer_file=$1
+    local conn_name left_id local_addr ike_proposals esp_proposals
+    local ike_lifetime ipsec_lifetime encap_mode start_action
+    local conf_file safe_name
+
+    vpn_gateway_peer_load "$peer_file" || return 1
+
+    safe_name=$(vpn_gateway_sanitize_name "$peer_name")
+    conn_name="vpn-gateway-${safe_name}"
+    conf_file="$STRONGSWAN_DATA_HOME/etc/conf.d/peer-${safe_name}.conf"
+
+    left_id=$(vpn_gateway_global_local_id)
+    local_addr=$(vpn_gateway_global_local_addr)
+
+    ike_proposals=$(vpn_gateway_build_ike_proposals \
+        "${peer_ike_encryption:-}" "${peer_ike_integrity:-}" \
+        "${peer_ike_dh_group:-}" "${peer_ike_proposals:-}") || return 1
+    esp_proposals=$(vpn_gateway_build_esp_proposals \
+        "${peer_ipsec_encryption:-}" "${peer_ipsec_integrity:-}" \
+        "${peer_ipsec_dh_group:-}" "${peer_esp_proposals:-}") || return 1
+
+    ike_lifetime=${peer_ike_lifetime:-${config_vpn_gateway_ike_lifetime:-86400}}
+    ipsec_lifetime=${peer_ipsec_lifetime:-${config_vpn_gateway_ipsec_lifetime:-43200}}
+    encap_mode=$(vpn_gateway_resolve_nat_t "${peer_nat_t:-${config_vpn_gateway_nat_t:-yes}}")
+    start_action=$(vpn_gateway_resolve_start_action "${peer_auto:-}")
+    local local_ts remote_ts nat_source
+
+    if [[ "$peer_nat" == yes ]]; then
+        nat_source=$(vpn_gateway_resolve_nat_source "${peer_nat_source:-}") || return 1
+    fi
+
+    local_ts=$(vpn_gateway_peer_local_ts "$peer_nat" "${nat_source:-}" "$peer_local_cidr" \
+        "$peer_include_rw_pool")
+    remote_ts=$(vpn_gateway_peer_remote_ts "$peer_remote_nat" "${peer_remote_nat_source:-}" \
+        "$peer_remote_cidr" "${peer_remote_peer_vpn_subnet:-}")
+
+    if [[ "$peer_auth" == cert ]]; then
+        vpn_gateway_stage_peer_ca "$peer_remote_ca" "${peer_remote_ca_pem:-}"
+        if [[ ! -f "$STRONGSWAN_DATA_HOME/x509ca/$peer_remote_ca" ]]; then
+            echo "ERROR! cert auth peer $peer_name requires CA at $STRONGSWAN_DATA_HOME/x509ca/$peer_remote_ca" >&2
+            return 1
+        fi
+    fi
+
+    mkdir -p "$STRONGSWAN_DATA_HOME/etc/conf.d"
+
+    {
+        cat << ---EOF
+connections {
+  ${conn_name} {
+    version = 2
+    encap = ${encap_mode}
+    send_certreq = ${peer_send_certreq}
+    local_addrs = ${local_addr}
+    remote_addrs = ${peer_host}
+    dpd_delay = 300s
+    rekey_time = ${ike_lifetime}s
+    proposals = ${ike_proposals}
+---EOF
+        case "$peer_auth" in
+            psk)
+                cat << ---EOF
+    local {
+      auth = psk
+      id = ${left_id}
+    }
+    remote {
+      auth = psk
+      id = ${peer_remote_id}
+    }
+---EOF
+                ;;
+            cert)
+                cat << ---EOF
+    local {
+      auth = pubkey
+      certs = bastion_cert.pem
+      id = ${left_id}
+    }
+    remote {
+      auth = pubkey
+      id = ${peer_remote_id}
+      cacerts = ${peer_remote_ca}
+    }
+---EOF
+                ;;
+        esac
+        cat << ---EOF
+    children {
+      ${safe_name}-net {
+        local_ts = ${local_ts}
+        remote_ts = ${remote_ts}
+        esp_proposals = ${esp_proposals}
+        life_time = ${ipsec_lifetime}s
+        dpd_action = restart
+        start_action = ${start_action}
+      }
+    }
+  }
+}
+---EOF
+        if [[ "$peer_auth" == psk ]]; then
+            cat << ---EOF
+
+secrets {
+  ike-${conn_name} {
+    id-1 = ${left_id}
+    id-2 = ${peer_remote_id}
+    secret = "${peer_psk}"
+  }
+}
+---EOF
+        fi
+    } > "$conf_file"
+
+    echo "$conf_file"
+}
+
+function vpn_gateway_remove_peer_conf {
+    local name=$1
+    local safe_name
+
+    safe_name=$(vpn_gateway_sanitize_name "$name")
+    rm -f "$STRONGSWAN_DATA_HOME/etc/conf.d/peer-${safe_name}.conf"
+}
+
+function vpn_gateway_regenerate_all_peer_confs {
+    local peer_file
+
+    mkdir -p "$VPN_GATEWAY_PEERS_DIR" "$STRONGSWAN_DATA_HOME/etc/conf.d"
+    rm -f "$STRONGSWAN_DATA_HOME/etc/conf.d"/peer-*.conf
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_write_peer_conf "$peer_file" || return 1
+    done
+    shopt -u nullglob
+}
+
+function vpn_gateway_regenerate_nft {
+    local peer_file local_cidr remote_cidr remote_vpn_subnet src_cidr dst_cidr
+    local nft_file=$VPN_GATEWAY_NFT_CONF
+
+    mkdir -p "$(dirname "$nft_file")"
+    : > "$nft_file"
+
+    cat << '---EOF' >> "$nft_file"
+table inet mycs_vpn_gateway {
+	chain forward {
+		type filter hook forward priority filter + 10; policy accept;
+---EOF
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || return 1
+        local_cidr=$peer_local_cidr
+        remote_cidr=$peer_remote_cidr
+        remote_vpn_subnet=$peer_remote_peer_vpn_subnet
+
+        while IFS= read -r src_cidr; do
+            [[ -n $src_cidr ]] || continue
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state new accept
+---EOF
+            done < <(vpn_gateway_peer_split_cidrs "$remote_cidr")
+        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
+
+        while IFS= read -r src_cidr; do
+            [[ -n $src_cidr ]] || continue
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state new accept
+---EOF
+            done < <(vpn_gateway_peer_split_cidrs "$local_cidr")
+        done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
+            "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
+
+        while IFS= read -r dst_cidr; do
+            [[ -n $dst_cidr ]] || continue
+            while IFS= read -r src_cidr; do
+                [[ -n $src_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${dst_cidr} ip daddr ${src_cidr} ct state established,related accept
+---EOF
+            done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
+                "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
+        done < <(vpn_gateway_peer_split_cidrs "$local_cidr")
+
+        while IFS= read -r src_cidr; do
+            [[ -n $src_cidr ]] || continue
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${src_cidr} ip daddr ${dst_cidr} ct state established,related accept
+---EOF
+            done < <(vpn_gateway_peer_split_cidrs "$remote_cidr")
+        done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
+
+        while IFS= read -r src_cidr; do
+            [[ -n $src_cidr ]] || continue
+            while IFS= read -r dst_cidr; do
+                [[ -n $dst_cidr ]] || continue
+                cat << ---EOF >> "$nft_file"
+		ip saddr ${dst_cidr} ip daddr ${src_cidr} ct state established,related accept
+---EOF
+            done < <(vpn_gateway_peer_local_forward_cidrs "$local_cidr" "$peer_include_rw_pool")
+        done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
+            "${peer_remote_nat_source:-}" "$remote_cidr" "$remote_vpn_subnet")
+    done
+    shopt -u nullglob
+
+    cat << '---EOF' >> "$nft_file"
+	}
+}
+---EOF
+
+    nft -f "$nft_file"
+}
+
+readonly VPN_GATEWAY_NAT_BYPASS_COMMENT='vpn-gateway-nat-bypass'
+readonly VPN_GATEWAY_NAT_SNAT_COMMENT='vpn-gateway-nat-snat'
+
+function vpn_gateway_clear_peer_postrouting {
+    local handle
+
+    command -v nft >/dev/null 2>&1 || return 0
+    nft list chain ip "$NFT_TABLE_NAT" postrouting -a 2>/dev/null \
+        | awk '/vpn-gateway-nat-(bypass|snat)/ { print $1 }' \
+        | sort -rn \
+        | while read -r handle; do
+            [[ -n $handle ]] || continue
+            nft delete rule ip "$NFT_TABLE_NAT" postrouting handle "$handle" \
+                2>/dev/null || true
+        done
+}
+
+# Masquerade for LAN->DMZ is inserted at the head of ip mycs_nat postrouting.
+# Peer rules must be inserted before masquerade or IPsec traffic selectors won't match.
+function vpn_gateway_refresh_peer_postrouting {
+    local peer_file src_cidr dst_cidr nat_source
+
+    network_nft_ensure_init
+    vpn_gateway_clear_peer_postrouting
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || return 1
+        if [[ "$peer_nat" == yes ]]; then
+            nat_source=$(vpn_gateway_resolve_nat_source "${peer_nat_source:-}") || return 1
+            while IFS= read -r src_cidr; do
+                [[ -n $src_cidr ]] || continue
+                while IFS= read -r dst_cidr; do
+                    [[ -n $dst_cidr ]] || continue
+                    network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$dst_cidr" \
+                        snat to "$nat_source" comment \"$VPN_GATEWAY_NAT_SNAT_COMMENT\"
+                done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
+            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
+        else
+            while IFS= read -r src_cidr; do
+                [[ -n $src_cidr ]] || continue
+                while IFS= read -r dst_cidr; do
+                    [[ -n $dst_cidr ]] || continue
+                    network_nft_insert_nat ip saddr "$src_cidr" ip daddr "$dst_cidr" \
+                        accept comment \"$VPN_GATEWAY_NAT_BYPASS_COMMENT\"
+                done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
+            done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
+        fi
+    done
+    shopt -u nullglob
+
+    network_nft_save
+}
+
+function vpn_gateway_clear_nat_bypass {
+    vpn_gateway_clear_peer_postrouting
+}
+
+function vpn_gateway_refresh_nat_bypass {
+    vpn_gateway_refresh_peer_postrouting
+}
+
+function vpn_gateway_ensure_policy_routing {
+    ip rule show 2>/dev/null | grep -q 'lookup 220' && return 0
+    ip rule add pref 220 from all lookup 220 2>/dev/null || true
+}
+
+# OpenStack/AWS NAT bastions must not route global_internal_cidr via the subnet
+# gateway on the admin NIC; that steals traffic destined for VPN peer CIDRs.
+function vpn_gateway_remove_admin_supernet_routes {
+    local admin_itf route
+
+    [[ -n "${config_server_admin_itf_ip:-}" ]] || return 0
+    admin_itf=$(ip -o -4 addr show \
+        | awk -v ip="$config_server_admin_itf_ip" '$4 ~ "^"ip"/" { sub(/@.*/, "", $2); print $2; exit }')
+    [[ -n $admin_itf ]] || return 0
+
+    while IFS= read -r route; do
+        [[ -n $route ]] || continue
+        ip route del $route 2>/dev/null || true
+    done < <(ip route show dev "$admin_itf" proto static | awk '/ via / {print}')
+}
+
+function vpn_gateway_initiate_all_peers {
+    local peer_file conn_name safe_name child_name
+
+    sleep 1
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        safe_name=$(vpn_gateway_sanitize_name "$peer_name")
+        conn_name="vpn-gateway-${safe_name}"
+        child_name="${safe_name}-net"
+        if ! swanctl --initiate --child "$child_name" --ike "$conn_name"; then
+            echo "WARNING! failed to initiate VPN gateway peer $peer_name ($conn_name)" >&2
+        fi
+    done
+    shopt -u nullglob
+}
+
+function vpn_gateway_refresh_docker_user_forward {
+    local peer_file cidr
+
+    command -v iptables >/dev/null 2>&1 || return 0
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        while IFS= read -r cidr; do
+            [[ -n $cidr ]] || continue
+            network_docker_user_add_cidr s "$cidr"
+        done < <(vpn_gateway_peer_local_forward_cidrs "$peer_local_cidr" "$peer_include_rw_pool")
+        while IFS= read -r cidr; do
+            [[ -n $cidr ]] || continue
+            network_docker_user_add_cidr s "$cidr"
+            network_docker_user_add_cidr d "$cidr"
+        done < <(vpn_gateway_peer_remote_forward_cidrs "$peer_remote_nat" \
+            "${peer_remote_nat_source:-}" "$peer_remote_cidr" "${peer_remote_peer_vpn_subnet:-}")
+        while IFS= read -r cidr; do
+            [[ -n $cidr ]] || continue
+            network_docker_user_add_cidr d "$cidr"
+        done < <(vpn_gateway_peer_split_cidrs "$peer_remote_cidr")
+    done
+    shopt -u nullglob
+}
+
+function vpn_gateway_sync_and_load {
+    strongswan_refresh_conf_includes "$STRONGSWAN_DATA_HOME/etc/swanctl.conf"
+    strongswan_sync_runtime
+    strongswan_start_service
+    strongswan_load_config
+}
+
+function vpn_gateway_ensure_swanctl_base {
+    strongswan_ensure_data_dirs
+
+    if [[ ! -f $STRONGSWAN_DATA_HOME/etc/swanctl.conf ]]; then
+        cat << ---EOF > "$STRONGSWAN_DATA_HOME/etc/swanctl.conf"
+connections {
+}
+
+pools {
+}
+---EOF
+    fi
+
+    strongswan_install_server_certs
+}
+
+function vpn_gateway_dnsdist_available {
+    [[ -f $VPN_GATEWAY_DNSDIST_CONF ]] \
+        && [[ -f /usr/local/etc/.powerdns_installed ]]
+}
+
+function vpn_gateway_restart_dnsdist {
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    # dnsdist does not re-execute dnsdist.conf on reload; peer pools need a restart.
+    systemctl restart dnsdist.service
+    local attempt
+    for attempt in $(seq 1 30); do
+        if systemctl is-active dnsdist.service >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    echo "WARNING! dnsdist did not become active after restart" >&2
+    journalctl -u dnsdist -n 20 --no-pager >&2 || true
+    return 1
+}
+
+function vpn_gateway_peer_dns_local_works {
+    local local_dns=$1 qname=$2
+
+    host -t A "$qname" "$local_dns" 2>/dev/null | grep -q 'has address'
+}
+
+function vpn_gateway_peer_dns_remote_reachable {
+    local dns_server=$1 zone=$2
+    local dns_host=${dns_server%:*}
+    local dns_port=${dns_server#*:}
+
+    [[ $dns_port == "$dns_server" ]] && dns_port=53
+    host -t SOA "$zone" "$dns_host" 2>/dev/null | grep -q 'has SOA record'
+}
+
+function vpn_gateway_peer_dns_zones_configured {
+    compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        || compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1
+}
+
+function vpn_gateway_all_peer_zones_resolve_locally {
+    local peer_file zone qname local_dns
+
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+
+    local_dns=${config_powerdns_ns_ip:-${config_server_admin_itf_ip:-}}
+    [[ -n $local_dns ]] || return 1
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        if [[ -z ${peer_remote_dns_server:-} || -z ${peer_remote_local_zone:-} ]]; then
+            continue
+        fi
+        for zone in $peer_remote_local_zone; do
+            qname="ns1.${zone}."
+            if ! vpn_gateway_peer_dns_local_works "$local_dns" "$qname"; then
+                shopt -u nullglob
+                return 1
+            fi
+        done
+    done
+    shopt -u nullglob
+    return 0
+}
+
+function vpn_gateway_any_peer_dns_remote_reachable {
+    local peer_file zone dns_server
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        if [[ -z ${peer_remote_dns_server:-} || -z ${peer_remote_local_zone:-} ]]; then
+            continue
+        fi
+        for zone in $peer_remote_local_zone; do
+            while IFS= read -r dns_server; do
+                [[ -n $dns_server ]] || continue
+                if vpn_gateway_peer_dns_remote_reachable "$dns_server" "$zone"; then
+                    shopt -u nullglob
+                    return 0
+                fi
+            done < <(vpn_gateway_peer_split_dns_servers "$peer_remote_dns_server")
+        done
+    done
+    shopt -u nullglob
+    return 1
+}
+
+function vpn_gateway_verify_peer_dnsdist {
+    if vpn_gateway_all_peer_zones_resolve_locally; then
+        return 0
+    fi
+    if vpn_gateway_any_peer_dns_remote_reachable; then
+        echo "WARNING! peer DNS is reachable over the tunnel but not via local dnsdist; retrying restart" >&2
+        systemctl restart dnsdist.service
+        sleep 2
+    fi
+}
+
+function vpn_gateway_schedule_dnsdist_peer_recheck {
+    local recheck_pid
+
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+    if vpn_gateway_all_peer_zones_resolve_locally; then
+        return 0
+    fi
+
+    if [[ -f $VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE ]]; then
+        recheck_pid=$(cat "$VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE" 2>/dev/null || true)
+        if [[ -n $recheck_pid ]] && kill -0 "$recheck_pid" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    nohup bash -c '
+        source /usr/local/lib/cloud-inceptor/common
+        source /usr/local/lib/cloud-inceptor/vpn_gateway_common
+        attempt=0
+        while [[ $attempt -lt 24 ]]; do
+            attempt=$((attempt + 1))
+            sleep 5
+            if ! vpn_gateway_dnsdist_available; then
+                exit 0
+            fi
+            if vpn_gateway_all_peer_zones_resolve_locally; then
+                exit 0
+            fi
+            if vpn_gateway_any_peer_dns_remote_reachable; then
+                systemctl restart dnsdist.service
+                sleep 2
+                if vpn_gateway_all_peer_zones_resolve_locally; then
+                    exit 0
+                fi
+            fi
+        done
+        echo "NOTE: cross-site DNS is still not ready; run manage_vpn_gateway_peer apply on both bastions" >&2
+    ' >>"$VPN_GATEWAY_DNSDIST_RECHECK_LOG" 2>&1 &
+    echo $! >"$VPN_GATEWAY_DNSDIST_RECHECK_PIDFILE"
+}
+
+function vpn_gateway_finish_dnsdist_apply {
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    # Peer DNS backends are reached over the IPsec tunnel; restart only after
+    # strongSwan has reloaded and child SAs are up.
+    sleep 2
+    echo "Restarting dnsdist for VPN gateway peer DNS rules..."
+    vpn_gateway_restart_dnsdist || return 1
+    vpn_gateway_verify_peer_dnsdist
+    vpn_gateway_schedule_dnsdist_peer_recheck
+}
+
+function vpn_gateway_boot_dnsdist_apply {
+    if compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        || compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+        vpn_gateway_initiate_all_peers
+    fi
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+    if ! vpn_gateway_peer_dns_zones_configured; then
+        return 0
+    fi
+    vpn_gateway_finish_dnsdist_apply
+}
+
+function vpn_gateway_regenerate_dnsdist_peer_rules {
+    local peer_file safe_name pool zone rules_file tmp
+    local peer_check_zone dns_server dns_order dns_rules server_pool
+
+    if ! vpn_gateway_dnsdist_available; then
+        return 0
+    fi
+
+    rules_file=$(mktemp)
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || return 1
+        if [[ -n ${peer_remote_dns_server:-} && -n ${peer_remote_local_zone:-} ]]; then
+            safe_name=$(vpn_gateway_sanitize_name "$peer_name")
+            pool="recursor_${safe_name}"
+            peer_check_zone=${peer_remote_local_zone%% *}
+            dns_order=0
+            dns_rules=$(mktemp)
+            while IFS= read -r dns_server; do
+                if [[ -n $dns_server ]]; then
+                    dns_order=$((dns_order + 1))
+                    if [[ $dns_order -eq 1 ]]; then
+                        server_pool=$pool
+                    else
+                        server_pool="${pool}_backup"
+                    fi
+                    echo "newServer({address='${dns_server}', pool='${server_pool}', healthCheckMode='auto', checkName='ns1.${peer_check_zone}.', checkType='SOA', mustResolve=true, checkInterval=10, checkTimeout=2000, maxCheckFailures=3, rise=2, reconnectOnUp=true})" >> "$dns_rules"
+                fi
+            done < <(vpn_gateway_peer_split_dns_servers "$peer_remote_dns_server")
+            if [[ $dns_order -gt 0 ]]; then
+                {
+                    cat "$dns_rules"
+                    echo "smn = newSuffixMatchNode()"
+                    for zone in $peer_remote_local_zone; do
+                        echo "smn:add('${zone}')"
+                    done
+                    if [[ $dns_order -eq 1 ]]; then
+                        echo "addAction(SuffixMatchNodeRule(smn), PoolAction('${pool}'))"
+                    else
+                        # Primary pool first while healthy; otherwise fail over to backup pool.
+                        # (Avoid ServerPool:setServerPolicy — not available on all dnsdist builds.)
+                        echo "addAction(AndRule({SuffixMatchNodeRule(smn), PoolAvailableRule('${pool}')}), PoolAction('${pool}'))"
+                        echo "addAction(SuffixMatchNodeRule(smn), PoolAction('${pool}_backup'))"
+                    fi
+                } >> "$rules_file"
+            fi
+            rm -f "$dns_rules"
+        fi
+    done
+    shopt -u nullglob
+
+    tmp=$(mktemp)
+    awk -v begin="$VPN_GATEWAY_DNSDIST_BEGIN" -v end="$VPN_GATEWAY_DNSDIST_END" -v rules="$rules_file" '
+    function print_rules(    line) {
+        while ((getline line < rules) > 0) {
+            print line
+        }
+        close(rules)
+    }
+    function emit_managed_block() {
+        if (managed_emitted) {
+            return
+        }
+        print ""
+        print begin
+        print_rules()
+        print end
+        print ""
+        managed_emitted = 1
+    }
+    $0 == begin {
+        skip = 1
+        next
+    }
+    skip {
+        if ($0 == end) {
+            skip = 0
+            skip_trailing_blank = 1
+        }
+        next
+    }
+    skip_trailing_blank && $0 ~ /^$/ {
+        next
+    }
+    skip_trailing_blank {
+        skip_trailing_blank = 0
+    }
+    skip_until_begin {
+        if ($0 == begin) {
+            skip_until_begin = 0
+            skip = 1
+            next
+        }
+        if ($0 ~ /^$/) {
+            next
+        }
+        skip_until_begin = 0
+    }
+    /newServer\(\{address=.127\.0\.0\.1:5301., pool=.pihole.\}\)/ {
+        print
+        emit_managed_block()
+        skip_until_begin = 1
+        next
+    }
+    { print }
+    ' "$VPN_GATEWAY_DNSDIST_CONF" > "$tmp"
+    install -m 0644 "$tmp" "$VPN_GATEWAY_DNSDIST_CONF"
+    rm -f "$rules_file" "$tmp"
+}
+
+function vpn_gateway_apply_all {
+    if ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+        rm -f "$STRONGSWAN_DATA_HOME/etc/conf.d"/peer-*.conf
+        rm -f "$VPN_GATEWAY_NFT_CONF"
+        nft delete table inet mycs_vpn_gateway 2>/dev/null || true
+        vpn_gateway_clear_nat_bypass
+        network_nft_save 2>/dev/null || true
+        vpn_gateway_regenerate_dnsdist_peer_rules || return 1
+        vpn_gateway_sync_and_load
+        vpn_gateway_finish_dnsdist_apply
+        return 0
+    fi
+
+    vpn_gateway_regenerate_all_peer_confs || return 1
+    vpn_gateway_regenerate_nft || return 1
+    vpn_gateway_refresh_nat_bypass || return 1
+    vpn_gateway_refresh_docker_user_forward
+    vpn_gateway_regenerate_dnsdist_peer_rules || return 1
+    vpn_gateway_sync_and_load
+    vpn_gateway_ensure_policy_routing
+    vpn_gateway_remove_admin_supernet_routes
+    vpn_gateway_initiate_all_peers
+    vpn_gateway_finish_dnsdist_apply
+}
+
+function vpn_gateway_list_peers {
+    local peer_file
+
+    if ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+        && ! compgen -G "$VPN_GATEWAY_PEERS_DIR/*.yml" >/dev/null 2>&1; then
+        echo "No VPN gateway peers configured."
+        return 0
+    fi
+
+    printf "%-20s %-30s %-18s %-18s %-5s %-5s %-12s\n" \
+        "NAME" "HOST" "LOCAL_CIDR" "REMOTE_CIDR" "NAT" "RNAT" "AUTH"
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_PEERS_DIR"/*.yaml "$VPN_GATEWAY_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_load "$peer_file" || continue
+        printf "%-20s %-30s %-18s %-18s %-5s %-5s %-12s\n" \
+            "$peer_name" "$peer_host" "$peer_local_cidr" \
+            "$peer_remote_cidr" "$peer_nat" "$peer_remote_nat" "$peer_auth"
+    done
+    shopt -u nullglob
+}
+
+function vpn_gateway_bootstrap_peers_configured {
+    [[ -d $VPN_GATEWAY_BOOTSTRAP_PEERS_DIR ]] \
+        && { compgen -G "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR/*.yaml" >/dev/null 2>&1 \
+            || compgen -G "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR/*.yml" >/dev/null 2>&1; }
+}
+
+function vpn_gateway_install_bootstrap_peers {
+    local peer_file
+
+    if ! vpn_gateway_bootstrap_peers_configured; then
+        return 0
+    fi
+
+    shopt -s nullglob
+    for peer_file in "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"/*.yaml \
+        "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"/*.yml; do
+        vpn_gateway_peer_add "$peer_file" || return 1
+    done
+    shopt -u nullglob
+
+    rm -rf "$VPN_GATEWAY_BOOTSTRAP_PEERS_DIR"
+}
+
+function vpn_gateway_peer_add {
+    local src=$1
+    local peer_name dest
+
+    [[ -n $src && -f $src ]] || {
+        echo "Usage: manage_vpn_gateway_peer add <peer.yaml>" >&2
+        return 1
+    }
+
+    vpn_gateway_peer_load "$src" || return 1
+
+    local safe_name
+    safe_name=$(vpn_gateway_sanitize_name "$peer_name")
+
+    mkdir -p "$VPN_GATEWAY_PEERS_DIR"
+    vpn_gateway_peer_cleanup_stale_files "$safe_name"
+    dest="$VPN_GATEWAY_PEERS_DIR/${safe_name}.yaml"
+    install -m 600 "$src" "$dest"
+    sed -i 's/\r$//' "$dest"
+
+    vpn_gateway_apply_all
+    echo "Added VPN gateway peer: $peer_name"
+}
+
+function vpn_gateway_peer_remove {
+    local name=$1
+    local safe_name peer_file
+
+    [[ -n $name ]] || {
+        echo "Usage: manage_vpn_gateway_peer remove <name>" >&2
+        return 1
+    }
+
+    safe_name=$(vpn_gateway_sanitize_name "$name")
+    peer_file="$VPN_GATEWAY_PEERS_DIR/${safe_name}.yaml"
+    [[ -f $peer_file ]] || peer_file="$VPN_GATEWAY_PEERS_DIR/${name}.yaml"
+    [[ -f $peer_file ]] || {
+        echo "ERROR! peer not found: $name" >&2
+        return 1
+    }
+
+    rm -f "$peer_file"
+    vpn_gateway_remove_peer_conf "$name"
+    vpn_gateway_apply_all
+    echo "Removed VPN gateway peer: $name"
+}
+
+function vpn_gateway_install_boot_service {
+    local peers_unit=/etc/systemd/system/cloud-inceptor-vpn-gateway-peers.service
+    local dnsdist_unit=/etc/systemd/system/cloud-inceptor-vpn-gateway-dnsdist.service
+
+    cat << ---EOF > "$peers_unit"
+[Unit]
+Description=Load VPN gateway peer nftables rules
+After=network-pre.target docker.service
+Before=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '[[ -f ${VPN_GATEWAY_NFT_CONF} ]] && nft -f ${VPN_GATEWAY_NFT_CONF} || true; source /usr/local/lib/cloud-inceptor/common; source /usr/local/lib/cloud-inceptor/vpn_gateway_common; vpn_gateway_refresh_peer_postrouting; vpn_gateway_ensure_policy_routing; vpn_gateway_remove_admin_supernet_routes'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+    cat << ---EOF > "$dnsdist_unit"
+[Unit]
+Description=Refresh dnsdist peer backends after VPN gateway peers are up
+After=cloud-inceptor-vpn-gateway-peers.service strongswan.service dnsdist.service
+Wants=strongswan.service dnsdist.service
+ConditionPathExists=/usr/local/etc/.powerdns_installed
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'source /usr/local/lib/cloud-inceptor/common; source /usr/local/lib/cloud-inceptor/vpn_gateway_common; vpn_gateway_boot_dnsdist_apply'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+    systemctl daemon-reload
+    systemctl enable cloud-inceptor-vpn-gateway-peers.service
+    systemctl enable cloud-inceptor-vpn-gateway-dnsdist.service
+}
+
+function vpn_gateway_install_cli {
+    ln -sf /usr/local/lib/cloud-inceptor/manage_vpn_gateway_peer \
+        /usr/local/bin/manage_vpn_gateway_peer
+}

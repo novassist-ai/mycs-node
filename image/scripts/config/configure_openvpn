@@ -1,0 +1,496 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.openvpn_installed ]] || exit 0
+
+if [[ "${config_vpn_type:-}" != "openvpn" ]]; then
+  echo "Skipping VPN setup as no VPN configuration found."
+  exit 0
+fi
+
+OPENVPN_DATA_HOME=/data/openvpn
+OPENVPN_CONFIG=$OPENVPN_DATA_HOME/etc
+
+if [[ -n $config_vpn_tunnel_vpn_port_start && -n $config_vpn_tunnel_vpn_port_end ]]; then
+  vpn_obfuscation_tunnel_port=( $(shuf -i ${config_vpn_tunnel_vpn_port_start}-${config_vpn_tunnel_vpn_port_end} -n 4) )
+  vpn_obfuscation_key=$(openssl rand --hex 10)
+fi
+
+function configure_openvpn() {
+
+  mkdir -p $OPENVPN_CONFIG
+  mv -f /etc/openvpn $OPENVPN_CONFIG
+  ln -s $OPENVPN_CONFIG /etc/openvpn
+
+  # Use the fully qualified name
+  # of the host instead of host ip.  
+  if [[ $config_server_use_fqdn == "true" ]]; then
+    echo "vpn_server=\"$config_server_fqdn\"" > $OPENVPN_CONFIG/serverinfo
+  else
+    echo "vpn_server=\"$config_server_host\"" > $OPENVPN_CONFIG/serverinfo
+  fi
+
+  echo "vpn_server_ip=\"$config_server_host\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_server_port=\"$config_vpn_openvpn_port\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_server_protocol=\"$config_vpn_openvpn_protocol\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_server_description=\"$config_vpn_server_description\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_server_domain=\"$config_vpn_server_domain\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_server_organization=\"$config_vpn_vpn_cert_org\"" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_obfuscation_tunnel_port_1=${vpn_obfuscation_tunnel_port[0]}" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_obfuscation_tunnel_port_2=${vpn_obfuscation_tunnel_port[1]}" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_obfuscation_tunnel_port_3=${vpn_obfuscation_tunnel_port[2]}" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_obfuscation_tunnel_port_4=${vpn_obfuscation_tunnel_port[3]}" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_obfuscation_key=$vpn_obfuscation_key" >> $OPENVPN_CONFIG/serverinfo
+  echo "vpn_auth_strategy=$config_vpn_auth_strategy" >> $OPENVPN_CONFIG/serverinfo
+
+  mkdir -p $OPENVPN_CONFIG/easy-rsa/
+  pushd $OPENVPN_CONFIG/easy-rsa/
+
+  cp -r /usr/share/easy-rsa/* $OPENVPN_CONFIG/easy-rsa/
+  cp $OPENVPN_CONFIG/easy-rsa/vars.example $OPENVPN_CONFIG/easy-rsa/vars
+  
+  sed -i "s|#set_var EASYRSA_REQ_CN\s*\".*\"|set_var EASYRSA_REQ_CN\\t\"${config_vpn_vpn_cert_name:-MyCS}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_EMAIL\s*\".*\"|set_var EASYRSA_REQ_EMAIL\\t\"${config_vpn_vpn_cert_email:-}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_COUNTRY\s*\".*\"|set_var EASYRSA_REQ_COUNTRY\\t\"${config_vpn_vpn_cert_country:-US}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_PROVINCE\s*\".*\"|set_var EASYRSA_REQ_PROVINCE\\t\"${config_vpn_vpn_cert_province:-MA}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_CITY\s*\".*\"|set_var EASYRSA_REQ_CITY\\t\"${config_vpn_vpn_cert_city:-Boston}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_ORG\s+\".*\"|set_var EASYRSA_REQ_ORG\\t\"${config_vpn_vpn_cert_org:-NovAssist}\"|" vars
+  sed -i "s|#set_var EASYRSA_REQ_OU\s+\".*\"|set_var EASYRSA_REQ_OU\\t\"${config_vpn_vpn_cert_ou:-Development}\"|" vars
+
+  # Removing RANDFILE reference that causes error
+  sed -i 's|^RANDFILE\s*=.*||' openssl-easyrsa.cnf
+
+  rm -fr pki
+  ./easyrsa init-pki
+  ./easyrsa --batch build-ca nopass
+  ./easyrsa --batch build-server-full $hn nopass
+  ./easyrsa gen-dh
+
+  cp pki/issued/$hn.crt pki/private/$hn.key pki/ca.crt pki/dh.pem $OPENVPN_CONFIG/
+  openvpn --genkey --secret $OPENVPN_CONFIG/ta.key
+
+  vpn_subnet_ip=${config_vpn_subnet/\/*/}
+
+  if [[ "$config_vpn_openvpn_protocol" == "tcp" ]]; then
+    explicit_exit_notify=0
+  else
+    explicit_exit_notify=1
+  fi
+
+  cat << ---EOF > $OPENVPN_CONFIG/server.conf
+#
+# OpenVPN server listener configuration
+#
+
+# IP and to bind to
+local $config_server_dmz_itf_ip
+# Port to Listen on
+port $config_vpn_openvpn_port
+# Protocol to use
+proto $config_vpn_openvpn_protocol
+
+# Create a routed IP tunnel
+dev tun
+---EOF
+
+  if [[ -n "$vpn_obfuscation_tunnel_port" && "$config_vpn_openvpn_protocol" == "udp" ]]; then
+    cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# Set limits on datagram fragmentation required 
+# when connecting UDP VPN through a tunnel
+fragment 1450
+mssfix 1450
+---EOF
+  fi
+
+  cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+#
+# SSL/TLS Server Certificates and configuration
+#
+
+# Root certificate
+ca ca.crt
+# Server certificate
+cert $hn.crt
+# Server certificate key
+key $hn.key
+
+# Diffie hellman parameters for SSL/TLS symmetric 
+# key exchange
+dh dh.pem
+
+#
+# VPN configuration
+#
+
+# Require authentication of client peer
+remote-cert-tls client
+
+# Used to create an "HMAC firewall" for extra 
+# security beyond that provided by SSL/TLS
+tls-auth ta.key 0
+
+# Cryptographic cipher for VPN traffic
+cipher AES-256-GCM
+---EOF
+
+  if [[ "$config_vpn_allow_multiple_logins" == "yes" ]]; then
+    cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# Allow multiple clients to connect with the same 
+# certificate/key files or common names
+duplicate-cn
+---EOF
+  fi
+
+  cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# Send connection keep alive pings every 10s 
+# and assume peer is down if no ping received
+# after 120s
+keepalive 10 120
+
+# Whether to notify the client that when the 
+# server restarts so it can automatically 
+# reconnect.
+explicit-exit-notify $explicit_exit_notify
+
+# Reduce the OpenVPN daemon's privileges after 
+# initialization.
+user nobody
+group nogroup
+
+# Avoid accessing certain resources on restart
+# that may no longer be accessible because of 
+# the privilege downgrade.
+persist-key
+persist-tun
+
+# Management port
+management localhost 7505
+
+# Status file showing current connections, 
+# truncated and rewritten every minute.
+status /var/log/openvpn/openvpn-status.log
+
+# Log file verbosity.
+verb 3
+
+#
+# VPN Subnet Configuration
+#
+
+# VPN subnet for OpenVPN to 
+# draw client addresses from
+server $vpn_subnet_ip $config_vpn_netmask
+
+# File maintaining a record of client-virtual IP 
+# address associations.
+ifconfig-pool-persist /var/log/openvpn/ipp.txt
+---EOF
+
+  if [[ "$config_vpn_tunnel_client_traffic" == "yes" ]]; then
+    cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# This directive will configure all clients to 
+# redirect their default network gateway through
+# the VPN, causing all IP traffic such as web
+# browsing  and DNS lookups to go through the VPN
+push "redirect-gateway def1 bypass-dhcp"
+---EOF
+  fi
+  
+  cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# These directives will configure all clients to 
+# use the specified DNS servers.
+---EOF
+  if [[ -e /usr/local/etc/.powerdns_installed ]]; then
+    openvpn_dns_servers=$config_powerdns_ns_ip
+  else
+    openvpn_dns_servers=${config_vpn_dns_servers:-$config_server_dns_resolvers}
+  fi
+  for ip in $(echo -e "$openvpn_dns_servers" | sed 's/,/ /g'); do
+    cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+push "dhcp-option DNS $ip"
+---EOF
+  done
+
+cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# The network topology for the LAN the VPN will
+# connect to
+topology subnet
+
+---EOF
+
+  # Push routes to internal LAN subnets (host routing is applied by configure_network)
+  while IFS='|' read -r _ lan_subnet; do
+    netinfo=$(ipcalc "$lan_subnet")
+    subnet_ip=$(echo -e "$netinfo" | awk '/Address/{ print $2 }')
+    netmask=$(echo -e "$netinfo" | awk '/Netmask/{ print $2 }')
+    cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+# Push route to internal LAN $lan_subnet
+push "route $subnet_ip $netmask"
+---EOF
+  done < <(network_iterate_internal_lans "$(network_discover_public_itf)")
+
+  # Configure client authentication in addition to client certificate authentication
+
+  cat << ---EOF >> $OPENVPN_CONFIG/server.conf
+
+# Enable PAM Authentication
+plugin /usr/lib/$(uname -m)-linux-gnu/openvpn/plugins/openvpn-plugin-auth-pam.so openvpn
+
+# Prevent re-authorization every 3600 seconds
+reneg-sec 0
+---EOF
+
+  case "$config_vpn_auth_strategy" in
+    google_mfa)
+      cat << ---EOF >> /etc/pam.d/openvpn
+# Enable multi-factor authentication with Google authenticator
+auth requisite pam_google_authenticator.so forward_pass
+auth required pam_unix.so use_first_pass
+---EOF
+
+      sed -i "s/# PAM configuration for the Secure Shell service/# PAM configuration for the Secure Shell service\n\nauth required \/lib\/x86_64-linux-gnu\/security\/pam_google_authenticator.so/" /etc/pam.d/sshd
+      sed -i "s/^ChallengeResponseAuthentication .*/ChallengeResponseAuthentication yes/" /etc/ssh/sshd_config
+      ;;
+
+    *)
+      cat << ---EOF >> /etc/pam.d/openvpn
+# Enable local user authentication
+auth required pam_unix.so
+---EOF
+      ;;
+  esac
+
+  popd
+}
+
+function configure_udp_tunnel_services() {
+
+  network_nft_ensure_init
+
+  # Set nftables rules for tunneling UDP over the
+  # raw tunnel which can by either tcp/udp/icmp
+  network_nft_insert_input ip daddr "$config_server_dmz_itf_ip" tcp dport \
+    "${vpn_obfuscation_tunnel_port[0]}" drop
+  network_nft_insert_input ip daddr "$config_server_dmz_itf_ip" udp dport \
+    "${vpn_obfuscation_tunnel_port[1]}" drop
+  network_nft_insert_input ip daddr "$config_server_dmz_itf_ip" icmp type echo-request drop
+
+  # Grant udp2raw CAP_NET_RAW capability
+  setcap cap_net_raw+ep /usr/local/bin/udp2raw
+
+  # Non-root user to run tunnel services on
+  set +e
+  id udp-tunnel >/dev/null 2>&1
+  [[ $? -eq 0 ]] || useradd udp-tunnel -p $(openssl rand -base64 32)
+  set -e
+
+  # UDP tunnel over raw sockets using TCP
+  cat << ---EOF > /etc/systemd/system/udp-rawtunnel-over-tcp.service
+[Unit]
+Description=UDP over RAW TCP Tunnel Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=udp-tunnel
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=udp2raw-tcp
+ExecStart=/usr/local/bin/udp2raw -s -l "$config_server_dmz_itf_ip:${vpn_obfuscation_tunnel_port[0]}" -r "$config_server_dmz_itf_ip:$config_vpn_openvpn_port" --key "$vpn_obfuscation_key" --cipher-mode "xor" --auth-mode "simple" --raw-mode "faketcp"
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+  systemctl enable udp-rawtunnel-over-tcp.service
+  systemctl start udp-rawtunnel-over-tcp.service
+
+  # UDP tunnel over raw sockets using UDP
+  cat << ---EOF > /etc/systemd/system/udp-rawtunnel-over-udp.service
+[Unit]
+Description=UDP over RAW UDP Tunnel Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=udp-tunnel
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=udp2raw-udp
+ExecStart=/usr/local/bin/udp2raw -s -l "$config_server_dmz_itf_ip:${vpn_obfuscation_tunnel_port[1]}" -r "$config_server_dmz_itf_ip:$config_vpn_openvpn_port" --key "$vpn_obfuscation_key" --cipher-mode "xor" --auth-mode "simple" --raw-mode "udp"
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+  systemctl enable udp-rawtunnel-over-udp
+  systemctl start udp-rawtunnel-over-udp
+
+  # UDP tunnel over raw sockets using ICMP
+  cat << ---EOF > /etc/systemd/system/udp-rawtunnel-over-icmp.service
+[Unit]
+Description=UDP over RAW ICMP Tunnel Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=udp-tunnel
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=udp2raw-icmp
+ExecStart=/usr/local/bin/udp2raw -s -l "$config_server_dmz_itf_ip:${vpn_obfuscation_tunnel_port[2]}" -r "$config_server_dmz_itf_ip:$config_vpn_openvpn_port" --key "$vpn_obfuscation_key" --cipher-mode "xor" --auth-mode "simple" --raw-mode "icmp"
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+  systemctl enable udp-rawtunnel-over-icmp.service
+  systemctl start udp-rawtunnel-over-icmp.service
+
+  # UDP tunnel over UDP using forward-error-correction
+  cat << ---EOF > /etc/systemd/system/udp-tunnel.service
+[Unit]
+Description=UDP Tunnel Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=udp-tunnel
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=udp-speeder
+ExecStart=/usr/local/bin/udp-speeder -s -f "20:10" -l "$config_server_dmz_itf_ip:${vpn_obfuscation_tunnel_port[3]}" -r "$config_server_dmz_itf_ip:$config_vpn_openvpn_port" -k "$vpn_obfuscation_key"
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+  systemctl enable udp-tunnel
+  systemctl start udp-tunnel
+}
+
+function configure_tcp_tunnel_service() {
+
+  set +e
+  id tcp-tunnel >/dev/null 2>&1
+  [[ $? -eq 0 ]] || useradd tcp-tunnel -p $(openssl rand -base64 32)
+  set -e
+
+  cat << ---EOF > /etc/systemd/system/tcp-tunnel.service
+[Unit]
+Description=TCP Tunnel Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=tcp-tunnel
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=kcptun-server
+LimitNOFILE=65535
+ExecStart=/usr/local/bin/kcptun-server -mode fast3 -nocomp -sockbuf 16777217 -dscp 46 -l "$config_server_dmz_itf_ip:${vpn_obfuscation_tunnel_port[0]}" -t "$config_server_dmz_itf_ip:$config_vpn_openvpn_port" -key "$vpn_obfuscation_key"
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+
+  systemctl enable tcp-tunnel
+  systemctl start tcp-tunnel
+}
+
+if [[ ! -e $OPENVPN_CONFIG/ta.key ]]; then
+  configure_openvpn
+else
+  rm -fr /etc/openvpn
+  ln -s $OPENVPN_CONFIG /etc/openvpn
+fi
+
+mv $SCRIPT_HOME/create_openvpn_user /usr/local/bin/create_vpn_user
+chmod +x /usr/local/bin/create_vpn_user
+mv $SCRIPT_HOME/delete_openvpn_user /usr/local/bin/delete_vpn_user
+chmod +x /usr/local/bin/delete_vpn_user
+
+cat /dev/null > /var/log/syslog
+systemctl enable openvpn@server.service
+systemctl start openvpn
+
+if [[ -n "$vpn_obfuscation_tunnel_port" ]]; then
+  case "$config_vpn_openvpn_protocol" in
+    udp)
+      # Configure VPN UDP obfuscation tunnel
+      configure_udp_tunnel_services
+      ;;
+    tcp)
+      # Configure VPN TCP obfuscation tunnel
+      configure_tcp_tunnel_service
+      ;;
+  esac
+fi
+
+if [[ "$config_vpn_idle_action" == "shutdown" ]]; then
+
+  sed -i "s/|| echo 10/|| echo ${config_mycs_idle_shutdown_time}/" /usr/local/lib/cloud-inceptor/idle_shutdown_openvpn
+  sed -i "s/  counter=10/  counter=${config_mycs_idle_shutdown_time}/" /usr/local/lib/cloud-inceptor/idle_shutdown_openvpn
+
+  # Setup CRON job to shutdown when no clients connected
+  cat << ---EOF >> /etc/cron.d/vpn_inactivity_action
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+* * * * *   root    test -x /usr/local/lib/cloud-inceptor/idle_shutdown_openvpn && /usr/local/lib/cloud-inceptor/idle_shutdown_openvpn
+---EOF
+fi
+
+#
+# Create VPN users
+#
+
+if [[ -n "$config_server_admin_user" \
+  && ! -e "/etc/openvpn/users/$config_server_admin_user" ]]; then
+
+  create_vpn_user $config_server_admin_user
+fi
+
+for u in $(echo $config_vpn_users | sed "s/,/ /g"); do
+  user=$(echo $u | awk -F'|' '{print $1}')
+
+  if [[ ! -e "/etc/openvpn/users/$user" ]]; then
+    passwd=$(echo $u | awk -F'|' '{print $2}')
+    create_vpn_user "$user" "$passwd"
+  fi
+done
+
+network_apply_roadwarrior_vpn_nft
+
+set +ex
+touch /usr/local/etc/.openvpn_installed

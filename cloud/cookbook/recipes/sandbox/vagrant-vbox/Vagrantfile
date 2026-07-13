@@ -1,0 +1,45 @@
+Vagrant.configure('2') do |config|
+
+  config.vm.define 'bastion' do |bastion|
+    bastion.vm.box = '${bastion_box_name}'
+    bastion.vm.box_version = '${bastion_box_version}'
+
+    bastion.vm.network 'public_network', bridge: '${def_bridge_name}', mac: '${bastion_mac_address}'
+
+    bastion.vm.cloud_init :user_data do |cloud_init|
+      cloud_init.content_type = 'text/cloud-config'
+      cloud_init.path = '${cloud_config_path}'
+    end
+
+    bastion.vm.provider 'virtualbox' do |vb|
+      vb.name = '${bastion_vm_name}'
+      vb.gui = false
+      vb.memory = '${bastion_memory_size}'
+      vb.customize [ 'guestproperty', 'set', :id, '/VirtualBox/GuestAdd/VBoxService/--timesync-set-threshold', 1000 ]
+      vb.customize [ 'modifyvm', :id, '--uartmode1', 'disconnected' ]
+
+      vb.customize [
+        'storageattach', :id,
+        '--storagectl', 'SCSI',
+        '--port', 2,
+        '--device', 0,
+        '--type', 'hdd',
+        '--medium', '${data_disk_path}'
+      ]
+    end
+  end
+
+  config.trigger.before :destroy do |trigger|
+    trigger.info = "Detaching data disk"
+    trigger.run = {
+      inline:
+        '${vboxmanage_exec_cli} -shutdown=true ' +
+          'storageattach "${bastion_vm_name}" ' +
+          '--storagectl "SCSI" ' +
+          '--port 2 ' +
+          '--device 0 ' +
+          '--type hdd ' +
+          '--medium none'
+    }
+  end
+end

@@ -1,0 +1,132 @@
+#!/bin/bash
+#
+# Network configuration dump helpers (sourced by common and init_instance).
+
+[[ -v NETWORK_CONFIGURATION_DUMP ]] \
+  || readonly NETWORK_CONFIGURATION_DUMP=/var/log/network-configuration.dump
+[[ -v NETWORK_CONFIGURATION_DUMP_BAK ]] \
+  || readonly NETWORK_CONFIGURATION_DUMP_BAK=/var/log/network-configuration-bak.dump
+[[ -v NFT_CONF ]] || readonly NFT_CONF=/data/network/etc/nftables.conf
+[[ -v NFT_TABLE_FILTER ]] || readonly NFT_TABLE_FILTER=mycs_filter
+[[ -v NFT_TABLE_NAT ]] || readonly NFT_TABLE_NAT=mycs_nat
+[[ -v NFT_TABLE_MANGLE ]] || readonly NFT_TABLE_MANGLE=mycs_mangle
+
+function network_dump_emit_section {
+    local title=$1
+    shift
+
+    printf '\n============================= %s ==============================\n' "$title"
+    if [[ $# -eq 0 ]]; then
+        printf '(no command)\n'
+    elif [[ $# -eq 1 ]]; then
+        bash -c "$1" 2>&1 || printf '(failed: %s)\n' "$1"
+    else
+        "$@" 2>&1 || printf '(failed: %s)\n' "$*"
+    fi
+    printf '===============================================================================\n'
+}
+
+function network_dump_emit_file {
+    local title=$1
+    local path=$2
+
+    printf '\n============================= %s ==============================\n' "$title"
+    if [[ -r $path ]]; then
+        cat "$path"
+    else
+        printf '(not found: %s)\n' "$path"
+    fi
+    printf '===============================================================================\n'
+}
+
+function network_nft_dump_to_stream {
+    local spec
+
+    if nft list ruleset 2>/dev/null; then
+        return 0
+    fi
+
+    for spec in "inet $NFT_TABLE_FILTER" "ip $NFT_TABLE_NAT" "ip $NFT_TABLE_MANGLE"; do
+        if nft list table $spec 2>/dev/null; then
+            echo
+        else
+            echo "(table $spec not loaded)"
+        fi
+    done
+}
+
+function network_configuration_dump {
+    local output=${1:-$NETWORK_CONFIGURATION_DUMP}
+    local init_status=${2:-unknown}
+
+    if [[ -f $output && -s $output ]]; then
+        cat "$output" >> "$NETWORK_CONFIGURATION_DUMP_BAK"
+    fi
+
+    {
+        echo "Bastion network configuration dump"
+        echo "Generated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+        echo "Hostname: $(hostname -f 2>/dev/null || hostname)"
+        echo "init_instance status: ${init_status}"
+
+        network_dump_emit_section "Network interfaces (brief)" ip -br link
+        network_dump_emit_section "Network interfaces (detailed)" ip -details link show
+        network_dump_emit_section "IP addresses" ip -details addr show
+        network_dump_emit_section "IPv4 routes" ip route show table all
+        network_dump_emit_section "IPv6 routes" ip -6 route show table all
+        network_dump_emit_section "Policy routing rules" ip rule list
+        network_dump_emit_section "ARP / neighbour table" ip neigh show
+        network_dump_emit_section "Legacy route table" route -n
+
+        if command -v netplan >/dev/null 2>&1; then
+            network_dump_emit_section "netplan status" netplan status
+        fi
+
+        network_dump_emit_file "netplan: /etc/netplan/99-bastion-network-config.yaml" \
+            /etc/netplan/99-bastion-network-config.yaml
+
+        for netplan_file in /etc/netplan/*.yaml /etc/netplan/*.yml; do
+            [[ -e $netplan_file ]] || continue
+            [[ $netplan_file == /etc/netplan/99-bastion-network-config.yaml ]] && continue
+            network_dump_emit_file "netplan: ${netplan_file}" "$netplan_file"
+        done
+
+        network_dump_emit_file "/etc/hosts" /etc/hosts
+        network_dump_emit_file "/etc/hostname" /etc/hostname
+        network_dump_emit_file "cloud-init network config" \
+            /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+
+        network_dump_emit_section "DNS resolver (resolvectl)" resolvectl status
+        network_dump_emit_file "/etc/resolv.conf" /etc/resolv.conf
+        if [[ -L /etc/resolv.conf ]]; then
+            echo "resolv.conf symlink: $(readlink -f /etc/resolv.conf)"
+        fi
+
+        network_dump_emit_section "sysctl (net.*)" sysctl net
+        network_dump_emit_file "/etc/sysctl.conf" /etc/sysctl.conf
+
+        network_dump_emit_section "nftables ruleset (runtime)" network_nft_dump_to_stream
+        network_dump_emit_file "nftables ruleset (persisted)" "$NFT_CONF"
+        network_dump_emit_section "nftables tables" nft list tables
+
+        if command -v conntrack >/dev/null 2>&1; then
+            network_dump_emit_section "conntrack statistics" conntrack -S
+        fi
+
+        if command -v iptables >/dev/null 2>&1; then
+            network_dump_emit_section "iptables filter" iptables -S
+            network_dump_emit_section "iptables nat" iptables -t nat -S
+            network_dump_emit_section "iptables mangle" iptables -t mangle -S
+        fi
+
+        network_dump_emit_section "Listening sockets (TCP/UDP)" ss -tulpn
+        network_dump_emit_section "IP forwarding proc" "cat /proc/sys/net/ipv4/ip_forward /proc/sys/net/ipv6/conf/all/forwarding"
+
+        if [[ -f /etc/dhcp/dhcpd.conf ]]; then
+            network_dump_emit_file "/etc/dhcp/dhcpd.conf" /etc/dhcp/dhcpd.conf
+            network_dump_emit_file "/etc/default/isc-dhcp-server" /etc/default/isc-dhcp-server
+        fi
+    } > "$output"
+
+    chmod 0600 "$output"
+}

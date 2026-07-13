@@ -1,0 +1,687 @@
+#!/bin/bash
+
+function parse_yaml {
+   local prefix=$2
+   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
+   sed -ne "s|^\($s\):|\1|" \
+        -e "s|^\($s\)\($w\)$s:$s[\"']\(.*\)[\"']$s\$|\1$fs\2$fs\3|p" \
+        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p" $1 |
+   awk -F$fs '{
+      indent = length($1)/2;
+      vname[indent] = $2;
+      for (i in vname) {if (i > indent) {delete vname[i]}}
+      if (length($3) > 0) {
+         vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
+         printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
+      }
+   }'
+}
+
+function wait_for_url {
+    local name=$1
+    local url=$2
+
+    i=0
+    curl -f -L "$url" >/dev/null 2>&1
+    while [[ $? -ne 0 && $i -lt 12 ]]; do
+        
+        i=$(($i+1))
+        echo "Waiting for $name to startup..."
+        sleep 5
+
+        curl -f -L "$url" >/dev/null 2>&1
+    done
+    if [[ $? -ne 0 ]]; then 
+        echo "ERROR! $name is still not running after 60 seconds."
+        exit 1
+    fi
+}
+
+function replace_or_append_key {
+    local key=$1
+    local value=$2
+    local file=$3
+
+    touch "$file"
+    grep -q "^.*${key}\s*=\s*.*$" "$file" \
+        && sed -e "s|^.*${key}=.*|${key}=${value}|" -i "$file" \
+        || echo "${key}=${value}" >> "$file"
+}
+
+function strongswan_pki {
+    if ! command -v pki >/dev/null 2>&1; then
+        echo "ERROR! strongSwan PKI tool not found (install strongswan-pki)." >&2
+        return 127
+    fi
+    pki "$@"
+}
+
+[[ -v STRONGSWAN_DATA_HOME ]] || readonly STRONGSWAN_DATA_HOME=/data/strongswan
+
+function strongswan_ensure_data_dirs {
+    mkdir -p "$STRONGSWAN_DATA_HOME/etc/conf.d"
+    mkdir -p "$STRONGSWAN_DATA_HOME"/{x509ca,x509,private,pubkey}
+}
+
+function strongswan_count_established_sas {
+    local count
+    count=$(swanctl --list-sas 2>/dev/null | grep -c ESTABLISHED || true)
+    echo "${count:-0}"
+}
+
+function strongswan_sync_user_creds {
+    local user=$1
+
+    [[ -e /usr/local/etc/.strongswan_installed ]] || return 0
+    [[ -e $STRONGSWAN_DATA_HOME/private/${user}.der ]] || return 0
+
+    install -m 600 "$STRONGSWAN_DATA_HOME/private/${user}.der" \
+        /etc/swanctl/private/${user}.der
+    install -m 644 "$STRONGSWAN_DATA_HOME/x509/${user}.der" \
+        /etc/swanctl/x509/${user}.der
+    swanctl --load-creds 2>/dev/null || true
+}
+
+function strongswan_remove_user_creds {
+    local user=$1
+
+    rm -f "$STRONGSWAN_DATA_HOME/private/${user}".{der,pem}
+    rm -f "$STRONGSWAN_DATA_HOME/x509/${user}".{der,pem}
+    rm -f /etc/swanctl/private/${user}.{der,pem}
+    rm -f /etc/swanctl/x509/${user}.{der,pem}
+    swanctl --load-creds 2>/dev/null || true
+}
+
+function ssl_cert_subject_cn {
+    local cert=$1
+
+    openssl x509 -in "$cert" -noout -subject \
+        | sed -n 's/.*CN[= ]*= *//p' \
+        | sed 's/,.*//; s/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+#
+# nftables helpers and LAN routing.
+# VPN nftables rules are applied from each configure_* VPN script.
+#
+
+[[ -v NFT_CONF ]] || readonly NFT_CONF=/data/network/etc/nftables.conf
+[[ -v NFT_TABLE_FILTER ]] || readonly NFT_TABLE_FILTER=mycs_filter
+[[ -v NFT_TABLE_NAT ]] || readonly NFT_TABLE_NAT=mycs_nat
+[[ -v NFT_TABLE_MANGLE ]] || readonly NFT_TABLE_MANGLE=mycs_mangle
+
+_NETWORK_DUMP_LIB="${BASH_SOURCE%/*}/network_dump"
+[[ -f $_NETWORK_DUMP_LIB ]] && source "$_NETWORK_DUMP_LIB"
+
+function network_nft_dump {
+    network_nft_dump_to_stream
+}
+
+function network_nft_tables_exist {
+    nft list table inet $NFT_TABLE_FILTER &>/dev/null
+}
+
+function network_nft_rules_persisted {
+    [[ -e $NFT_CONF ]] \
+        && grep -q "table inet $NFT_TABLE_FILTER" "$NFT_CONF"
+}
+
+function network_nft_restore {
+    network_nft_rules_persisted || return 1
+    nft -f "$NFT_CONF" || return 1
+    network_nft_tables_exist
+}
+
+function network_nft_save {
+    if [[ ! -e /usr/local/etc/.network_installed ]]; then
+        echo "ERROR! refusing to persist nftables before configure_network completed" >&2
+        return 1
+    fi
+
+    mkdir -p /data/network/etc
+    : > "$NFT_CONF"
+    local spec
+    for spec in "inet $NFT_TABLE_FILTER" "ip $NFT_TABLE_NAT" "ip $NFT_TABLE_MANGLE"; do
+        if nft list table $spec &>/dev/null; then
+            nft list table $spec >> "$NFT_CONF"
+        fi
+    done
+    chmod 600 "$NFT_CONF"
+}
+
+function network_nft_init {
+    nft delete table inet $NFT_TABLE_FILTER 2>/dev/null || true
+    nft delete table ip $NFT_TABLE_NAT 2>/dev/null || true
+    nft delete table ip $NFT_TABLE_MANGLE 2>/dev/null || true
+
+    nft add table inet $NFT_TABLE_FILTER
+    nft add chain inet $NFT_TABLE_FILTER input \
+        '{ type filter hook input priority filter; policy accept; }'
+    nft add chain inet $NFT_TABLE_FILTER forward \
+        '{ type filter hook forward priority filter; policy accept; }'
+
+    nft add table ip $NFT_TABLE_NAT
+    nft add chain ip $NFT_TABLE_NAT postrouting \
+        '{ type nat hook postrouting priority srcnat; policy accept; }'
+
+    nft add table ip $NFT_TABLE_MANGLE
+    nft add chain ip $NFT_TABLE_MANGLE forward \
+        '{ type filter hook forward priority mangle; policy accept; }'
+
+    nft add rule inet $NFT_TABLE_FILTER input ct state established,related accept
+    nft add rule inet $NFT_TABLE_FILTER input iif "lo" accept
+    nft add rule inet $NFT_TABLE_FILTER input ct state invalid drop
+
+    nft insert rule inet $NFT_TABLE_FILTER forward ct state established,related accept
+}
+
+function network_nft_ensure_init {
+    network_nft_tables_exist || network_nft_init
+}
+
+function network_nft_insert_forward {
+    nft insert rule inet $NFT_TABLE_FILTER forward "$@"
+}
+
+function network_nft_add_forward {
+    nft add rule inet $NFT_TABLE_FILTER forward "$@"
+}
+
+function network_nft_add_input {
+    nft add rule inet $NFT_TABLE_FILTER input "$@"
+}
+
+function network_nft_insert_input {
+    nft insert rule inet $NFT_TABLE_FILTER input "$@"
+}
+
+function network_nft_insert_nat {
+    nft insert rule ip $NFT_TABLE_NAT postrouting "$@"
+}
+
+function network_nft_add_nat {
+    nft add rule ip $NFT_TABLE_NAT postrouting "$@"
+}
+
+function network_nft_add_mangle {
+    nft add rule ip $NFT_TABLE_MANGLE forward "$@"
+}
+
+function network_discover_public_itf {
+    ip a \
+        | grep -B 5 "$config_server_dmz_itf_ip" \
+        | awk '/^[0-9]+: eth[0-9]+|en(p[0-9]+)?(s?[0-9]+):/{ print substr($2,1,length($2)-1) }'
+}
+
+function network_discover_itfs {
+    ip a | awk '/^[0-9]+: eth[0-9]+|en(p[0-9]+)?(s?[0-9]+):/{ print substr($2,1,length($2)-1) }'
+}
+
+function network_nic_entry_lan_subnet {
+    local n=$1
+    local lan_subnet
+
+    lan_subnet=$(echo "$n" | awk -F'|' '{print $3}')
+    if [[ -z $lan_subnet || $lan_subnet == "0.0.0.0/0" ]]; then
+        lan_subnet=$(echo "$n" | awk -F'|' '{print $2}')
+    fi
+    echo "$lan_subnet"
+}
+
+# Prints lines of: interface|lan_cidr
+function network_iterate_internal_lans {
+    local public_itf=$1
+    local itfs i n itf lan_subnet
+
+    itfs=( $(network_discover_itfs) )
+    i=0
+    for n in $(echo "$config_server_lan_interfaces" | sed "s/,/ /g"); do
+        itf=${itfs[$i]}
+        i=$(($i+1))
+        [[ -n $itf && $itf != $public_itf ]] || continue
+        lan_subnet=$(network_nic_entry_lan_subnet "$n")
+        [[ -n $lan_subnet ]] || continue
+        echo "${itf}|${lan_subnet}"
+    done
+}
+
+function network_collect_internal_lan_subnets {
+    local public_itf=$1
+    local line lan_subnet
+    local -a subnets=()
+
+    while IFS='|' read -r _ lan_subnet; do
+        subnets+=("$lan_subnet")
+    done < <(network_iterate_internal_lans "$public_itf")
+
+    if [[ ${#subnets[@]} -gt 0 ]]; then
+        printf '%s\n' "${subnets[@]}"
+    fi
+}
+
+function network_roadwarrior_enabled {
+    [[ -n "${config_vpn_type:-}" && -n "${config_vpn_subnet:-}" ]]
+}
+
+function network_vpn_gateway_enabled {
+    [[ "${config_vpn_gateway_enabled:-}" == "yes" ]]
+}
+
+function network_roadwarrior_source_cidr {
+    local wg_network
+
+    case "${config_vpn_type:-}" in
+        wireguard)
+            if [[ -n "${config_vpn_wireguard_subnet_ip:-}" ]]; then
+                wg_network=$(ipcalc "$config_vpn_wireguard_subnet_ip" \
+                    | awk '/Network:/{ print $2 }')
+                [[ -n $wg_network ]] && echo "$wg_network" && return
+            fi
+            ;;
+    esac
+    echo "${config_vpn_subnet:-}"
+}
+
+function network_roadwarrior_ingress_itf {
+    case "${config_vpn_type:-}" in
+        openvpn) echo tun0 ;;
+        wireguard) echo "${config_vpn_wireguard_itf_name:-wg0}" ;;
+        ipsec) echo "" ;;
+        *) echo "" ;;
+    esac
+}
+
+function network_derive_vpn_gateway_local_cidr {
+    local public_itf=$1
+    local src lan_subnet cidrs=()
+
+    if [[ -n "${config_vpn_gateway_local_cidr:-}" ]]; then
+        echo "$config_vpn_gateway_local_cidr"
+        return
+    fi
+
+    if network_roadwarrior_enabled; then
+        cidrs+=("$(network_roadwarrior_source_cidr)")
+    fi
+
+    while IFS= read -r lan_subnet; do
+        cidrs+=("$lan_subnet")
+    done < <(network_collect_internal_lan_subnets "$public_itf")
+
+    if [[ ${#cidrs[@]} -eq 0 ]]; then
+        echo ""
+        return
+    fi
+
+    local IFS=,
+    echo "${cidrs[*]}"
+}
+
+function network_collect_vpn_gateway_transit_sources {
+    local public_itf=$1
+    local src
+
+    if network_roadwarrior_enabled; then
+        echo "$(network_roadwarrior_source_cidr)"
+    fi
+
+    while IFS= read -r src; do
+        echo "$src"
+    done < <(network_collect_internal_lan_subnets "$public_itf")
+}
+
+# CIDRs for which forwarded traffic must bypass Docker's FORWARD DROP policy.
+function network_collect_docker_user_forward_cidrs {
+    local public_itf=${1:-}
+    local -a cidrs=()
+    local cidr lan_subnet n itfs i itf src vpn_subnet
+
+    [[ -n $public_itf ]] || public_itf=$(network_discover_public_itf)
+
+    if network_roadwarrior_enabled; then
+        vpn_subnet=$(network_roadwarrior_source_cidr)
+        [[ -n $vpn_subnet ]] && cidrs+=("$vpn_subnet")
+    fi
+
+    while IFS='|' read -r _ lan_subnet; do
+        [[ -n $lan_subnet ]] && cidrs+=("$lan_subnet")
+    done < <(network_iterate_internal_lans "$public_itf")
+
+    itfs=( $(network_discover_itfs) )
+    i=0
+    for n in $(echo "$config_server_lan_interfaces" | sed "s/,/ /g"); do
+        itf=${itfs[$i]}
+        i=$((i+1))
+        [[ -n $itf && $itf != $public_itf ]] || continue
+        cidr=$(echo "$n" | awk -F'|' '{print $2}')
+        [[ -n $cidr ]] && cidrs+=("$cidr")
+    done
+
+    if network_vpn_gateway_enabled; then
+        while IFS= read -r src; do
+            [[ -n $src ]] && cidrs+=("$src")
+        done < <(network_collect_vpn_gateway_transit_sources "$public_itf")
+    fi
+
+    if [[ ${#cidrs[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    printf '%s\n' "${cidrs[@]}" | awk '!seen[$0]++'
+}
+
+function network_docker_user_rule_exists {
+    local dir=$1
+    local cidr=$2
+
+    iptables -C DOCKER-USER -"$dir" "$cidr" -j ACCEPT &>/dev/null
+}
+
+function network_docker_user_add_cidr {
+    local dir=$1
+    local cidr=$2
+
+    [[ -n $cidr ]] || return 0
+    network_docker_user_rule_exists "$dir" "$cidr" \
+        || iptables -I DOCKER-USER 1 -"$dir" "$cidr" -j ACCEPT
+}
+
+# Docker installs an ip filter FORWARD chain with policy DROP. Bastion routing
+# uses inet mycs_filter, but Docker is often registered first after reboot.
+# DOCKER-USER is Docker's supported extension point for forwarded traffic.
+function network_apply_docker_user_forward {
+    local public_itf=${1:-}
+    local cidr
+
+    command -v iptables >/dev/null 2>&1 || {
+        echo "WARN: iptables not found; skipping DOCKER-USER forward rules." >&2
+        return 0
+    }
+
+    while IFS= read -r cidr; do
+        [[ -n $cidr ]] || continue
+        network_docker_user_add_cidr s "$cidr"
+        network_docker_user_add_cidr d "$cidr"
+    done < <(network_collect_docker_user_forward_cidrs "$public_itf")
+}
+
+function network_apply_boot_sysctl {
+    [[ -f /etc/sysctl.conf ]] || return 0
+    sysctl -p /etc/sysctl.conf >/dev/null 2>&1 || true
+}
+
+function network_apply_boot_network {
+    [[ -e /data/network/etc/nftables.conf ]] \
+        && nft -f /data/network/etc/nftables.conf
+    network_apply_boot_sysctl
+    # dockerd may start before rc.local via systemd; refresh DOCKER-USER after
+    # nftables masquerade/forward rules are loaded so RW and LAN egress work.
+    if systemctl is-active --quiet docker.service 2>/dev/null; then
+        network_apply_docker_user_forward || true
+    fi
+}
+
+function network_apply_vpn_ingress_rules {
+    local public_itf=$1
+
+    if ! network_roadwarrior_enabled; then
+        if network_vpn_gateway_enabled \
+            && [[ "${config_vpn_gateway_protocol:-ipsec}" == "ipsec" ]]; then
+            network_nft_add_input udp dport 500 accept
+            network_nft_add_input udp dport 4500 accept
+        fi
+        return
+    fi
+
+    case "${config_vpn_type}" in
+        openvpn)
+            if [[ -n "${config_vpn_openvpn_port:-}" \
+                && -n "${config_vpn_openvpn_protocol:-}" ]]; then
+                network_nft_add_input iifname "$public_itf" \
+                    "${config_vpn_openvpn_protocol}" dport "${config_vpn_openvpn_port}" accept
+            fi
+            ;;
+        wireguard)
+            if [[ -n "${config_vpn_wireguard_listen_port:-}" ]]; then
+                network_nft_add_input iifname "$public_itf" udp \
+                    dport "${config_vpn_wireguard_listen_port}" accept
+            fi
+            ;;
+        ipsec)
+            network_nft_add_input udp dport 500 accept
+            network_nft_add_input udp dport 4500 accept
+            ;;
+    esac
+}
+
+function network_apply_roadwarrior_routing {
+    local public_itf=$1
+    local vpn_subnet vpn_itf itf lan_subnet
+
+    network_roadwarrior_enabled || return 0
+
+    vpn_subnet=$(network_roadwarrior_source_cidr)
+    vpn_itf=$(network_roadwarrior_ingress_itf)
+    [[ -n $vpn_subnet ]] || return 0
+
+    case "${config_vpn_type}" in
+        ipsec)
+            network_nft_add_forward ipsec in ip saddr "$vpn_subnet" accept
+            network_nft_add_forward ipsec out ip daddr "$vpn_subnet" accept
+            network_nft_add_mangle ipsec in ip saddr "$vpn_subnet" \
+                oifname "$public_itf" tcp flags '&' '(syn|rst)' == syn \
+                tcp option maxseg size 1361-1536 tcp option maxseg size set 1360
+            network_nft_add_nat ipsec out ip saddr "$vpn_subnet" \
+                oifname "$public_itf" accept
+            ;;
+        *)
+            network_nft_insert_forward iifname "$vpn_itf" oifname "$public_itf" \
+                ip saddr "$vpn_subnet" ct state new accept
+            ;;
+    esac
+
+    network_nft_add_nat oifname "$public_itf" ip saddr "$vpn_subnet" masquerade
+
+    while IFS='|' read -r itf lan_subnet; do
+        network_nft_insert_nat oifname "$itf" ip saddr "$vpn_subnet" masquerade
+        case "${config_vpn_type}" in
+            ipsec)
+                network_nft_insert_forward iifname "$public_itf" oifname "$itf" \
+                    ip saddr "$vpn_subnet" ip daddr "$lan_subnet" ct state new accept
+                ;;
+            *)
+                network_nft_insert_forward iifname "$vpn_itf" oifname "$itf" \
+                    ip saddr "$vpn_subnet" ip daddr "$lan_subnet" ct state new accept
+                ;;
+        esac
+    done < <(network_iterate_internal_lans "$public_itf")
+}
+
+function network_apply_vpn_gateway_routing {
+    local public_itf=$1
+    local src remote
+
+    network_vpn_gateway_enabled || return 0
+    [[ -n "${config_vpn_gateway_remote_cidr:-}" ]] || return 0
+
+    for remote in $(echo "$config_vpn_gateway_remote_cidr" | tr ',' ' '); do
+        [[ -n $remote ]] || continue
+        while IFS= read -r src; do
+            [[ -n $src ]] || continue
+            network_nft_insert_nat ip saddr "$src" ip daddr "$remote" accept
+            network_nft_add_forward ip saddr "$src" ip daddr "$remote" ct state new accept
+            network_nft_add_forward ip daddr "$src" ip saddr "$remote" \
+                ct state established,related accept
+        done < <(network_collect_vpn_gateway_transit_sources "$public_itf")
+    done
+}
+
+function network_apply_vpn_routing {
+    local public_itf=$1
+
+    [[ -n $public_itf ]] || return 0
+
+    network_apply_vpn_ingress_rules "$public_itf"
+    network_apply_roadwarrior_routing "$public_itf"
+    network_apply_vpn_gateway_routing "$public_itf"
+}
+
+function network_apply_roadwarrior_vpn_nft {
+    local public_itf=${1:-}
+
+    [[ -n $public_itf ]] || public_itf=$(network_discover_public_itf)
+    [[ -n $public_itf ]] || return 0
+
+    network_nft_ensure_init
+    network_apply_vpn_ingress_rules "$public_itf"
+    network_apply_roadwarrior_routing "$public_itf"
+    network_nft_save
+}
+
+function network_apply_vpn_gateway_nft {
+    local public_itf=${1:-}
+
+    [[ -n $public_itf ]] || public_itf=$(network_discover_public_itf)
+    [[ -n $public_itf ]] || return 0
+
+    network_nft_ensure_init
+    if ! network_roadwarrior_enabled; then
+        network_apply_vpn_ingress_rules "$public_itf"
+    fi
+    network_apply_vpn_gateway_routing "$public_itf"
+    network_nft_save
+}
+
+function powerdns_configure_systemd_resolved {
+    local domains=$1
+    local dns_server=${2:-$config_powerdns_ns_ip}
+
+    [[ -n $dns_server ]] || return 1
+    domains=$(echo "$domains" | xargs)
+
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat <<EOF > /etc/systemd/resolved.conf.d/bastion-powerdns.conf
+[Resolve]
+DNS=${dns_server}
+FallbackDNS=${config_server_dns_resolvers}
+Domains=${domains}
+DNSStubListener=no
+EOF
+    systemctl restart systemd-resolved.service
+    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+}
+
+function powerdns_configure_recursor {
+    local listen_address=${1:-$config_powerdns_ns_ip}
+    local forward_zones_file=${2:-/etc/powerdns/forward-zones.conf}
+
+    mkdir -p /etc/powerdns/recursor.d
+    cat <<EOF > /etc/powerdns/recursor.d/bastion.yml
+incoming:
+  listen: !override
+    - '${listen_address}:5300'
+
+recursor:
+  forward_zones_file: ${forward_zones_file}
+EOF
+}
+
+# This script needs to be run as root
+if [[ `whoami` != "root" ]]; then 
+    echo -e "\nThis script needs to be run as root.\n"
+    exit 1
+fi
+
+# Load configuration
+if [ ! -e "/etc/mycs/config.yml" ]; then
+    set +x
+    wget http://169.254.169.254/latest/user-data -O /etc/mycs/config.yml 
+    set -x
+
+    # Remove if user data is not a yaml file
+    s=$(head -1 /etc/mycs/config.yml)
+    [[ $s != "---" ]] && rm /etc/mycs/config.yml
+fi
+if [[ -e "/etc/mycs/config.yml" ]]; then
+    eval $(parse_yaml /etc/mycs/config.yml "config_")
+else
+    exit 0
+fi
+
+# Defaults when optional YAML sections are omitted
+: "${config_vpn_type:=}"
+: "${config_vpn_subnet:=}"
+: "${config_vpn_gateway_enabled:=no}"
+: "${config_vpn_gateway_protocol:=ipsec}"
+: "${config_vpn_gateway_auth:=psk}"
+: "${config_vpn_gateway_auto:=start}"
+: "${config_vpn_gateway_routing:=static}"
+: "${config_vpn_gateway_ike_encryption:=aes256}"
+: "${config_vpn_gateway_ike_integrity:=sha256}"
+: "${config_vpn_gateway_ike_dh_group:=14}"
+: "${config_vpn_gateway_ike_lifetime:=86400}"
+: "${config_vpn_gateway_ipsec_encryption:=aes256}"
+: "${config_vpn_gateway_ipsec_integrity:=sha256}"
+: "${config_vpn_gateway_ipsec_dh_group:=14}"
+: "${config_vpn_gateway_ipsec_lifetime:=43200}"
+: "${config_vpn_gateway_nat:=no}"
+: "${config_vpn_gateway_nat_t:=yes}"
+: "${config_vpn_gateway_remote_ca:=upstream_ca.pem}"
+: "${config_vpn_gateway_local_cidr:=}"
+
+# determine network ips
+if [[ -z $config_server_dmz_itf_ip ]]; then
+    config_server_dmz_itf_ip=$(ip route get 1.1.1.1 | awk '/^1\.1\.1\.1 via/{ print $7 }')
+else
+    route_check=$(ip route get $config_server_dmz_itf_ip)
+    if [[ ! $route_check =~ ^local.* ]]; then
+        config_server_dmz_itf_ip=$(echo "$route_check" | awk 'match($0, /src [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {print substr($0, RSTART+4, RLENGTH-4)}')
+    fi
+fi
+if [[ -z $config_server_admin_itf_ip ]]; then
+    config_server_admin_itf_ip=$config_server_dmz_itf_ip
+fi
+if [[ -z $config_server_dns_resolvers ]]; then
+    config_server_dns_resolvers=$config_server_admin_itf_ip
+fi
+if [[ -z $config_powerdns_ns_ip ]]; then
+    config_powerdns_ns_ip=$config_server_admin_itf_ip
+fi
+if [[ -z $config_smtp_internal_smtp_host ]]; then
+    config_smtp_internal_smtp_host=$config_server_admin_itf_ip
+fi
+if [[ -z $config_vpn_wireguard_host_ip ]]; then
+    config_vpn_wireguard_host_ip=$config_server_admin_itf_ip
+fi
+if [[ $config_services_ts_control_stun_addr == :* ]]; then
+    config_services_ts_control_stun_addr="${config_server_dmz_itf_ip}${config_services_ts_control_stun_addr}"
+fi
+
+# retrieve public ip and fqdn if not 
+# provided via cloud metadata service
+case $config_server_host in
+    aws)
+        config_server_host=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+        ;;
+esac
+case $config_server_fqdn in
+    aws)
+        config_server_fqdn=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
+        ;;
+esac
+# if host is not a valid IP then attempt to retrieve it via introspection
+if [[ ! $config_server_host =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    config_server_host=$(curl -s ifconfig.me)
+fi
+# if fqdn is not valid then resolve using IP.mycloudspace.org dynamic IP-DNS resolver
+if [[ ! $config_server_fqdn =~ ^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$ ]]; then
+    config_server_fqdn="$(echo "$config_server_host" | tr '.' '-').mycloudspace.org"
+fi
+
+hn=$(hostname)
+set +e
+cat /etc/hosts | grep "127.0.1.1" > /dev/null 2>&1
+if [[ $? -ne 0 ]]; then
+    sed -i "s|^127.0.0.1 .*$|127.0.0.1 localhost\n127.0.1.1 $hn|" /etc/hosts
+fi
+set -e

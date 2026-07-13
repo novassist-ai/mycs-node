@@ -1,0 +1,389 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+function configure_network_nft_chain_contains {
+  local family_table=$1
+  local chain=$2
+  local needle=$3
+
+  nft list chain "$family_table" "$chain" 2>/dev/null | grep -Fq "$needle"
+}
+
+# Idempotent: after restore, skip rules already present in the loaded ruleset.
+function configure_network_apply_lan_routing {
+  local public_itf=$1
+  local l ll src_subnet src_itf dest_subnet dest_itf
+
+  for l in "${lans[@]}"; do
+    src_subnet=$(echo "$l" | awk -F'|' '{print $1}')
+    src_itf=$(echo "$l" | awk -F'|' '{print $2}')
+
+    if [[ -n $src_subnet ]]; then
+      if ! configure_network_nft_chain_contains ip mycs_nat postrouting \
+          "oifname \"$public_itf\" ip saddr $src_subnet masquerade"; then
+        network_nft_insert_nat oifname "$public_itf" ip saddr "$src_subnet" masquerade
+      fi
+
+      if [[ $src_itf != $public_itf ]]; then
+        if ! configure_network_nft_chain_contains inet mycs_filter forward \
+            "iifname \"$src_itf\" oifname \"$public_itf\" ip saddr $src_subnet ct state new accept"; then
+          network_nft_insert_forward iifname "$src_itf" oifname "$public_itf" \
+            ip saddr "$src_subnet" ct state new accept
+        fi
+
+        for ll in "${lans[@]}"; do
+          dest_subnet=$(echo "$ll" | awk -F'|' '{print $1}')
+          dest_itf=$(echo "$ll" | awk -F'|' '{print $2}')
+
+          if [[ -n $dest_subnet \
+            && "$src_subnet" != "$dest_subnet" \
+            && $dest_itf != $public_itf ]]; then
+
+            if ! configure_network_nft_chain_contains inet mycs_filter forward \
+                "iifname \"$src_itf\" oifname \"$dest_itf\" ip saddr $src_subnet ip daddr $dest_subnet ct state new accept"; then
+              network_nft_insert_forward iifname "$src_itf" oifname "$dest_itf" \
+                ip saddr "$src_subnet" ip daddr "$dest_subnet" ct state new accept
+            fi
+          fi
+        done
+      fi
+    fi
+  done
+}
+
+[[ ! -e /usr/local/etc/.network_installed ]] || exit 0
+
+if [[ -z $config_server_dmz_itf_ip ]]; then
+  exit 0
+fi
+
+#
+# Setup hostname to map to domain
+#
+if [[ -n $config_server_fqdn ]]; then
+  echo "$config_server_fqdn" > /etc/hostname
+  hostname $config_server_fqdn
+
+  sed -i \
+    "s|^127.0.1.1.*$|127.0.1.1\t${config_server_fqdn}  ${config_server_fqdn%%.*}|" \
+    /etc/hosts
+
+  sed -i \
+    "s|^$config_server_dmz_itf_ip.*$|$config_server_dmz_itf_ip  ${config_server_fqdn}  ${config_server_fqdn%%.*}|" \
+    /etc/hosts
+fi
+
+#
+# Configure NICS
+#
+
+set +x
+echo -e "\n============================= Network Interfaces =============================="
+ip a
+echo -e "=================================== Routes ===================================="
+route -n
+echo -e "===============================================================================\n"
+set -x
+
+ip_a=$(ip a)
+itfs=( $(echo "$ip_a" | awk '/^[0-9]+: eth[0-9]+|en(p[0-9]+)?(s?[0-9]+):/{ print substr($2,1,length($2)-1) }') )
+
+public_itf=$(echo "$ip_a" \
+  | grep -B 5 "$config_server_dmz_itf_ip" \
+  | awk '/^[0-9]+: eth[0-9]+|en(p[0-9]+)?(s?[0-9]+):/{ print substr($2,1,length($2)-1) }')
+
+if [[ -n $config_powerdns_ns_ip ]]; then
+  nameservers=$config_powerdns_ns_ip
+else
+  nameservers=$config_server_dns_resolvers
+fi
+
+# Disable cloud-init network configuration
+rm -f /etc/netplan/*.yaml
+rm -f /etc/netplan/*.yml
+cat << ---EOF > /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+network: {config: disabled}
+---EOF
+
+cat << ---EOF > /etc/netplan/99-bastion-network-config.yaml
+network:
+  version: 2
+  ethernets:
+---EOF
+
+dhcpd_interfaces=""
+lans=()
+
+i=0
+j=51
+
+for n in $(echo $config_server_lan_interfaces | sed "s/,/ /g"); do
+
+  itf=${itfs[$i]}
+  i=$(($i+1))
+
+  # If more lan interfaces are configured 
+  # then available then skip them
+  [[ -n $itf ]] || continue
+  
+  ips=$(echo $n | awk -F'|' '{print $1}')
+  if [[ $ips == x ]]; then
+    cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+    $itf:
+      activation-mode: off
+---EOF
+
+    continue # do not configure this itf
+  fi
+
+  ip=$(echo $ips | awk -F'+' '{print $1}')  
+  vip=$(echo $ips | awk -F'+' '{print $2}')
+  subnet=$(echo $n | awk -F'|' '{print $2}')
+  static_route_subnet=$(echo $n | awk -F'|' '{print $3}')
+  gateway=$(echo $n | awk -F'|' '{print $4}')
+  dhcp_lease_start=$(echo $n | awk -F'|' '{print $5}')
+  dhcp_lease_end=$(echo $n | awk -F'|' '{print $6}')
+
+  mac_addr=$(echo "$ip_a" | grep -A 2 "^[0-9]*: $itf" | awk '/link\/ether/{ print $2 }')
+
+  if [[ -n $subnet ]]; then
+    netinfo=$(ipcalc $subnet)
+    subnet_ip=$(echo -e "$netinfo" | awk '/Address/{ print $2 }')
+    subnet_bits=$(echo -e "$netinfo" | awk '/Netmask/{ print $4 }')
+    netmask=$(echo -e "$netinfo" | awk '/Netmask/{ print $2 }')
+    broadcast=$(echo -e "$netinfo" | awk '/Broadcast/{ print $2 }')
+  else
+    netinfo=""
+    subnet_ip=""
+    subnet_bits=""
+    netmask=""
+    broadcast=""
+  fi
+
+  if [[ -z "$static_route_subnet" \
+    || "$static_route_subnet" == "0.0.0.0/0" ]]; then
+    lan_itf="$subnet|$itf"
+  else
+    lan_itf="$static_route_subnet|$itf"
+  fi
+  lans+=($lan_itf)
+
+  set +e
+  ifconfig $itf down
+  ip address flush dev $itf
+
+  # stop all dhcp clients
+  for pid in $(ps -ef | awk '!/awk/&&/dhclient.'$itf'/{ print $2 }'); do
+    kill -9 $pid
+  done
+
+  if [[ -n $ip ]]; then
+
+    [[ -z $vip ]] || \
+      vip_addr="\n      - $vip/32"
+
+    # Static routes can be configured on the interface
+    # only if a static IP has been configured for it.
+    if [[ -n $gateway ]]; then
+
+      if [[ -n $static_route_subnet ]]; then
+        # Static IP on the interface subnet plus an on-link route (e.g. AWS admin ENI).
+        cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+    $itf:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+      - $ip/$subnet_bits$(echo -e "$vip_addr")
+      routes:
+      - to: $static_route_subnet
+        via: $gateway
+        metric: 100
+        on-link: true
+      nameservers:
+        addresses: [$nameservers]
+---EOF
+
+      else
+        # Configure a static IP with gateway
+        cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+    $itf:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+      - $ip/$subnet_bits$(echo -e "$vip_addr")
+      gateway4: $gateway
+      nameservers:
+        addresses: [$nameservers]
+---EOF
+      fi
+
+    else
+      # Configure a static IP 
+      cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+    $itf:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+      - $ip/$subnet_bits$(echo -e "$vip_addr")
+      nameservers:
+        addresses: [$nameservers]
+---EOF
+    fi
+
+  else
+    # Configure DHCP
+    cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+    $itf:
+      dhcp4: true
+      dhcp4-overrides:
+        route-metric: 100
+        hostname: $config_server_fqdn
+        send-hostname: true
+        use-hostname: false
+---EOF
+
+    if [[ -n $vip ]]; then
+      cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+      addresses:
+      - $vip/32
+---EOF
+    fi
+  fi
+
+  if [[ -n $mac_addr ]]; then
+    # Lock interface to mac address
+    cat << ---EOF >> /etc/netplan/99-bastion-network-config.yaml
+      match:
+        macaddress: $mac_addr
+      set-name: $itf
+---EOF
+  fi
+
+  set -e
+  j=$(($j+1))
+
+  # Configure DHCP daemon's leases on subnet
+  if [[ -n $dhcp_lease_start ]]; then
+
+    dhcpd_interfaces="$dhcpd_interfaces $itf"
+
+    cat << ---EOF >> /etc/dhcp/dhcpd.conf
+
+subnet $subnet_ip netmask $netmask {
+
+  option routers              $ip;
+  option subnet-mask          $netmask;
+  option broadcast-address    $broadcast;
+  option domain-name-servers  $config_server_dns_resolvers;
+  option ntp-servers          $ip;
+  default-lease-time          86400;
+  max-lease-time              86400;
+
+  range $dhcp_lease_start $dhcp_lease_end;
+}
+---EOF
+  fi
+done
+
+# Delete default routes
+ip route flush default
+# Apply new network settings
+chmod 600 /etc/netplan/99-bastion-network-config.yaml
+netplan apply
+
+if [[ -z $public_itf ]]; then
+  # NAT interface should be configured by now and 
+  # it should have beeen assigned the server's 
+  # private IP from the provided configuration
+  public_itf=$(ip a \
+    | grep -B 5 "$config_server_dmz_itf_ip" \
+    | awk '/^[0-9]+: eth[0-9]+|en(p[0-9]+)?(s?[0-9]+):/{ print substr($2,1,length($2)-1) }')
+
+  [[ -n $public_itf ]] || (
+    echo "ERROR! unable to determine interface mapped to server's IP $public_itf.";
+    exit 1;
+  )
+fi
+
+# Enable IP forwarding for both IPv4 and IPv6
+replace_or_append_key "net.ipv4.ip_forward" "1" /etc/sysctl.conf
+replace_or_append_key "net.ipv6.conf.all.forwarding" "1" /etc/sysctl.conf
+
+# Prevent ICMP redirects
+replace_or_append_key "net.ipv4.conf.all.accept_redirects" "0" /etc/sysctl.conf
+replace_or_append_key "net.ipv6.conf.all.accept_redirects" "0" /etc/sysctl.conf
+replace_or_append_key "net.ipv4.conf.default.accept_redirects" "0" /etc/sysctl.conf
+replace_or_append_key "net.ipv6.conf.default.accept_redirects" "0" /etc/sysctl.conf
+replace_or_append_key "net.ipv4.conf.all.send_redirects" "0" /etc/sysctl.conf
+replace_or_append_key "net.ipv4.conf.default.send_redirects" "0" /etc/sysctl.conf
+
+replace_or_append_key "net.ipv4.ip_no_pmtu_disc" "1" /etc/sysctl.conf
+replace_or_append_key "net.ipv4.conf.all.rp_filter" "2" /etc/sysctl.conf
+
+# Increase OS UDP Buffers to Improve Performance
+replace_or_append_key "net.core.rmem_max" "26214400" /etc/sysctl.conf
+replace_or_append_key "net.core.rmem_default" "26214400" /etc/sysctl.conf
+replace_or_append_key "net.core.wmem_max" "26214400" /etc/sysctl.conf
+replace_or_append_key "net.core.wmem_default" "26214400" /etc/sysctl.conf
+replace_or_append_key "net.core.netdev_max_backlog" "2048" /etc/sysctl.conf
+
+sysctl -p
+
+if network_nft_restore; then
+  echo "Restored nftables ruleset from $NFT_CONF"
+else
+  network_nft_tables_exist || network_nft_init
+fi
+
+# LAN rules are derived from config.yml, not from the persisted file. A volume that
+# outlives a bastion replace can carry an nftables.conf saved without them (e.g.
+# when a prior init restored an incomplete file and skipped this block, or when
+# init_instance continued after configure_network failed and a VPN script saved).
+configure_network_apply_lan_routing "$public_itf"
+touch /usr/local/etc/.network_installed
+network_nft_save
+
+#
+# Save network configuration
+#
+if [[ -n $config_data_shared_external_folder ]]; then
+
+  # look up IP of public itf as it may have 
+  # changed when network came back up
+  i=12
+  while [ $i -gt 0 ]; do
+    dmz_itf_ip=$(ifconfig | grep -A 4 $public_itf | awk '/inet /{ print $2 }')
+    [[ -z $dmz_itf_ip ]] || break
+    sleep 5
+    i=$(($i-1))
+  done
+  [[ -n $dmz_itf_ip ]] || (
+    echo "ERROR! unable to determine ip of $public_itf obtained via dhcp.";
+    exit 1;
+  )
+
+  cat << ---EOF > ${config_data_shared_external_folder}/host_network.json
+{
+  "ip": "${dmz_itf_ip}",
+  "fqdn": "${config_server_fqdn}"
+}
+---EOF
+fi
+
+#
+# Enable DHCPD
+#
+
+if [[ $config_server_enable_dhcpd == true ]]; then
+  sed -i "s|INTERFACES=.*|INTERFACES=\"$dhcpd_interfaces\"|" \
+    /etc/default/isc-dhcp-server
+
+  systemctl enable isc-dhcp-server.service
+  systemctl start isc-dhcp-server.service
+fi
+
+set +ex

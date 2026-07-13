@@ -1,0 +1,73 @@
+Options +Indexes
+
+<IfModule mod_autoindex.c>
+
+  # Ignore listing of the listing directory
+  IndexIgnore "/static/directory-listing" ..
+
+  # Indexing options
+  IndexOptions +AddAltClass +Charset=UTF-8 +FancyIndexing +FoldersFirst +HTMLTable
+  IndexOptions +IgnoreCase +IconsAreLinks +NameWidth=*
+  IndexOptions +SuppressRules +SuppressDescription +SuppressLastModified +SuppressSize
+
+  # Some meta tags to add to the head tag
+  IndexHeadInsert "<meta name='viewport' content='width=device-width, initial-scale=1'><meta http-equiv='X-UA-Compatible' content='IE=edge'>"
+
+  HeaderName "/static/directory-listing/header.html"
+  ReadmeName "/static/directory-listing/footer-ipsec.html"
+  IndexStyleSheet "/static/directory-listing/table-noheader.css"
+
+  # Registering icons
+  # Default icon
+  DefaultIcon "/static/directory-listing/icons/config-file.png"
+
+  # Inceptor VPN config and installer icons
+  AddIcon "/static/directory-listing/icons/ios-logo.svg" *.mobileconfig
+  AddIcon "/static/directory-listing/icons/keychain.png" *.p12
+
+  AddType application/octet-stream .mobileconfig
+  AddType application/octet-stream *.p12
+
+  # Some generic icons
+  AddIcon "/static/directory-listing/icons/blank.svg" ^^BLANKICON^^
+  AddIcon "/static/directory-listing/icons/folder.svg" ^^DIRECTORY^^
+  AddIcon "/static/directory-listing/icons/folder-home.svg" ..
+
+  # Extension specific icons
+  AddIcon "/static/directory-listing/icons/archive.svg" .zip .7z .bz2 .cab .gz .tar .rar
+  AddIcon "/static/directory-listing/icons/audio.svg" .aac .aif .aifc .aiff .ape .au .flac .iff .m4a .mid .mp3 .mpa .ra .wav .wma .f4a .f4b .oga .ogg .xm .it .s3m .mod
+  AddIcon "/static/directory-listing/icons/bin.svg" .bin .hex
+  AddIcon "/static/directory-listing/icons/code.svg" .xml
+  AddIcon "/static/directory-listing/icons/doc.svg" .doc .docx .docm .dot .dotx .dotm .log .msg .odt .pages .rtf .tex .wpd .wps
+  AddIcon "/static/directory-listing/icons/img.svg" .bmp .png .tiff .tif .gif .jpg .jpeg .jpe .psd .ai .ico .webp
+  AddIcon "/static/directory-listing/icons/spreadsheet.svg" .xlsx .xlsm .xltx .xltm .xlam .xlr .xls .csv
+  AddIcon "/static/directory-listing/icons/presentation.svg" .ppt .pptx .pot .potx .pptm .potm .xps
+  AddIcon "/static/directory-listing/icons/c++.svg" .cpp
+  AddIcon "/static/directory-listing/icons/c.svg" .c
+  AddIcon "/static/directory-listing/icons/css3.svg" .css .sass .scss .less
+  AddIcon "/static/directory-listing/icons/font.svg" .ttf .TTF .woff .WOFF .woff2 .WOFF2 .otf .OTF
+  AddIcon "/static/directory-listing/icons/h.svg" .h
+  AddIcon "/static/directory-listing/icons/html5.svg" .html .xhtml .shtml .htm .URL .url
+  AddIcon "/static/directory-listing/icons/info.svg" .nfo .info
+  AddIcon "/static/directory-listing/icons/iso.svg" .iso .img
+  AddIcon "/static/directory-listing/icons/java.svg" .jar .java
+  AddIcon "/static/directory-listing/icons/js.svg" .js .json
+  AddIcon "/static/directory-listing/icons/markdown.svg" .md
+  AddIcon "/static/directory-listing/icons/package.svg" .pkg .dmg .rpm .deb
+  AddIcon "/static/directory-listing/icons/pdf.svg" .pdf
+  AddIcon "/static/directory-listing/icons/php.svg" .php .phtml
+  AddIcon "/static/directory-listing/icons/py.svg" .py
+  AddIcon "/static/directory-listing/icons/rb.svg" .rb
+  AddIcon "/static/directory-listing/icons/script.svg" .bat .BAT .cmd .sh .ps .exe .EXE .msi .MSI
+  AddIcon "/static/directory-listing/icons/sql.svg" .sql
+  AddIcon "/static/directory-listing/icons/text.svg" .txt .cnf .conf .map .yaml
+  AddIcon "/static/directory-listing/icons/vector.svg" .svg .svgz
+  AddIcon "/static/directory-listing/icons/video.svg" .asf .asx .avi .flv .mkv .mov .mp4 .mpg .rm .srt .swf .vob .wmv .m4v .f4v .f4p .ogv .webm
+
+  # Icons based on their type
+  AddIconByType (TXT,/directory-listing/icons/text.svg) text/*
+  AddIconByType (IMG,/directory-listing/icons/img.svg) image/*
+  AddIconByType (SND,/directory-listing/icons/audio.svg) audio/*
+  AddIconByType (VID,/directory-listing/icons/video.svg) video/*
+
+</IfModule>

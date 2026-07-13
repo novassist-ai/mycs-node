@@ -1,0 +1,505 @@
+#!/bin/bash
+
+set -e
+
+if [[ `whoami` != "root" ]]; then 
+  echo -e "\nThis script needs to be run as root.\n"
+  exit 1
+fi
+
+if [[ -z "$1" ]]; then
+  echo -e "\nUsage: create_vpn_user user [ password ]\n"
+  exit 1
+fi
+
+user=$1
+password=$2
+user_home=/data/users/home/$user
+
+set +e
+id $user >/dev/null 2>&1
+if [[ $? -ne 0 && -z "$password" ]]; then
+  echo -e "\nThe $user does not exist. Please create the user"
+  echo -e "or pass the password as the second argument to "
+  echo -e "this script to create a new user.\n"
+  exit 1
+fi
+set -e
+
+if [[ -n $password ]]; then
+  set +e
+  userdel $user > /dev/null 2>&1
+  set -e
+  rm -fr $user_home
+
+  password_hash=$(mkpasswd "$password")
+  useradd $user -p $password_hash -m -d $user_home -s /bin/bash
+fi
+
+if [[ -n $3 ]]; then
+  echo "$3" > $user_home/.ssh/authorized_keys
+
+  grep -q "^AllowUsers $user" /etc/ssh/sshd_config \
+    || echo -e "AllowUsers $user" >> /etc/ssh/sshd_config
+
+  service sshd restart
+fi
+
+if [[ -e /etc/apache2 ]]; then
+
+  APACHE_USER_CONFIG=/data/users/etc/apache2
+  mkdir -p $APACHE_USER_CONFIG
+  cat << ---EOF > ${APACHE_USER_CONFIG}/$user.conf
+<Directory $user_home>
+  AuthType Basic
+  AuthName "Restricted Area"
+  AuthBasicProvider external
+  AuthExternal pwauth
+  AllowOverride All
+  Require user $user
+  Options +Indexes
+</Directory>
+---EOF
+
+  cp /var/www/html/directory-listing/htaccess-openvpn.txt $user_home/.htaccess
+  systemctl restart apache2
+fi
+
+#
+# Create user's VPN credentials 
+# and client configuration files
+#
+
+rm -fr /etc/openvpn/users/${user}
+dest_dir=/etc/openvpn/users/${user}
+mkdir -p "${dest_dir}/client"
+
+case "$vpn_auth_strategy" in
+  google_mfa)
+    google-authenticator -f -t -d -r 3 -R 30 -w 8 -l "${user}@${vpn_server_domain}" -s $user_home/.google_authenticator
+    cp $user_home/.google_authenticator /etc/openvpn/users/${user}/gauth.secret
+    chown ubuntu:ubuntu /etc/openvpn/users/${user}/gauth.secret
+    ;;
+  *)
+    ;;
+esac
+
+pushd /etc/openvpn/easy-rsa/
+rm -f pki/issued/${user}.crt
+rm -f pki/private/${user}.key
+./easyrsa --batch build-client-full $user nopass
+
+# Copy certs and keys files for non-embedded configs
+cp pki/issued/${user}.crt pki/private/${user}.key "${dest_dir}/client"
+cp /etc/openvpn/ca.crt /etc/openvpn/ta.key "${dest_dir}/client"
+popd
+
+source /etc/openvpn/serverinfo
+
+# Create tunnel client scripts
+if [[ -n "$vpn_obfuscation_tunnel_port_1" ]]; then
+
+  cat << ---EOF > "$dest_dir/client_tunnel"
+#!/bin/bash
+
+case \$1 in
+---EOF
+
+  if [[ "$vpn_server_protocol" == "udp" ]]; then
+    cat << ---EOF >> "$dest_dir/client_tunnel"
+  udp_over_tcp)
+    udp2raw -a -c \\
+      -l "0.0.0.0:$vpn_server_port" \\
+      -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_1" \\
+      --key "$vpn_obfuscation_key" \\
+      --cipher-mode "xor" \\
+      --auth-mode "simple" \\
+      --raw-mode "faketcp"
+    ;;
+  udp_over_icmp)
+    udp2raw -a -c \\
+      -l "0.0.0.0:$vpn_server_port" \\
+      -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_3" \\
+      --key "$vpn_obfuscation_key" \\
+      --cipher-mode "xor" \\
+      --auth-mode "simple" \\
+      --raw-mode "icmp"
+    ;;
+  udp_over_udp)
+    udp2raw -a -c \\
+      -l "0.0.0.0:$vpn_server_port" \\
+      -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_2" \\
+      --key "$vpn_obfuscation_key" \\
+      --cipher-mode "xor" \\
+      --auth-mode "simple" \\
+      --raw-mode "udp"
+    ;;
+  udp_over_udp_with_fec)
+    udp-speeder -c -f "20:10" \\
+      -l "0.0.0.0:$vpn_server_port" \\
+      -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_4" \\
+      -k "$vpn_obfuscation_key"
+    ;;
+---EOF
+
+  else
+    cat << ---EOF >> "$dest_dir/client_tunnel"
+  tcp_over_udp_with_fec)
+    kcptun-client -mode fast3 -nocomp -autoexpire 900 -sockbuf 16777217 -dscp 46 \\
+      -l "0.0.0.0:$vpn_server_port" \\
+      -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_1" \\
+      -key "$vpn_obfuscation_key"
+    ;;
+---EOF
+  fi
+
+  cat << ---EOF >> "$dest_dir/client_tunnel"
+  *)
+    echo "ERROR! Unknown tunnel type requested."
+    exit 1
+  ;;
+esac
+---EOF
+fi
+
+client_conf_path=$dest_dir/$vpn_server_description.ovpn
+
+cat << ---EOF > "$client_conf_path"
+#
+# OpenVPN client configuration
+#
+client
+
+# Create a routed IP tunnel same as server
+dev tun
+---EOF
+
+if [[ -n "$vpn_obfuscation_tunnel_port_1" ]]; then
+  cat << ---EOF >> "$client_conf_path"
+
+# When tunnelling the gateway needs to be  
+# explicitly set as the public IP of the 
+# VPN server
+route $vpn_server_ip 255.255.255.255 net_gateway
+---EOF
+
+  if [[ "$vpn_server_protocol" == "udp" ]]; then
+    cat << ---EOF >> "$client_conf_path"
+
+# Set same limits on datagram fragmentation
+# as have been configured on the server
+fragment 1450
+mssfix 1450
+
+<connection>
+  #
+  # Connect through a UDP tunnel. This will require
+  # a local tunnel client connecting to a remote
+  # tunnel server using the utilities udp2raw or 
+  # UDPSpeeder .
+  #
+  # https://github.com/wangyu-/udp2raw-multiplatform
+  #
+  # Run the UDP2Raw CLI as root from the its
+  # folder as follows using the best option:
+  #
+  # sudo ./udp2raw_mp -c \\
+  #     -l "127.0.0.1:$vpn_server_port" \\
+  #     -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_1" \\
+  #     --key "$vpn_obfuscation_key" \\
+  #     --cipher-mode "xor" \\
+  #     --auth-mode "simple" \\
+  #     --raw-mode "faketcp"
+  #
+  # sudo ./udp2raw_mp -c \\
+  #     -l "127.0.0.1:$vpn_server_port" \\
+  #     -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_2" \\
+  #     --key "$vpn_obfuscation_key" \\
+  #     --cipher-mode "xor" \\
+  #     --auth-mode "simple" \\
+  #     --raw-mode "udp"
+  #
+  # sudo ./udp2raw_mp -c \\
+  #     -l "127.0.0.1:$vpn_server_port" \\
+  #     -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_3" \\
+  #     --key "$vpn_obfuscation_key" \\
+  #     --cipher-mode "xor" \\
+  #     --auth-mode "simple" \\
+  #     --raw-mode "icmp"
+  #
+  # https://github.com/wangyu-/UDPspeeder 
+  #
+  # Unlike UDP2Raw, UDPSpeeder does not need
+  # to be run as root. You can run the CLI 
+  # from the its folder as follows:
+  #
+  # ./speederv2 -c -f "20:10" \\
+  #     -l "127.0.0.1:$vpn_server_port" \\
+  #     -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_4" \\
+  #     -k "$vpn_obfuscation_key"
+---EOF
+  else
+    cat << ---EOF >> "$client_conf_path"
+      
+<connection>
+  #
+  # Connect through a TCP tunnel. This will require
+  # a local tunnel client connecting to a remote
+  # tunnel server using a utility like STunnel or
+  # KCPTun. 
+  #
+  # https://github.com/xtaci/kcptun/releases
+  #
+  # Run KCPTun client as follows
+  #
+  # ./client_darwin_amd64 -mode fast3 -nocomp -autoexpire 900 -sockbuf 16777217 -dscp 46 \\
+  #     -l "127.0.0.1:$vpn_server_port" \\
+  #     -r "$vpn_server_ip:$vpn_obfuscation_tunnel_port_1" \\
+  #     -key "$vpn_obfuscation_key"
+---EOF
+  fi
+
+  cat << ---EOF >> "$client_conf_path"
+  #
+  # This enables bypassing firewalls and telcos that 
+  # block or throttle the OpenVPN protocol via DPI.
+  #
+
+  # The hostname/IP and port of the server
+  remote 127.0.0.1 $vpn_server_port
+  # Protocol to use
+  proto $vpn_server_protocol
+
+  # Timeout waiting for local tunnel connection
+  server-poll-timeout 10
+  connect-timeout 20
+</connection>
+---EOF
+fi
+
+cat << ---EOF >> "$client_conf_path"
+
+<connection>
+  #
+  # Connect to VPN server directly
+  #
+
+  # The hostname/IP and port of the server
+  remote $vpn_server $vpn_server_port
+  # Protocol to use
+  proto $vpn_server_protocol
+</connection>
+
+# Keep trying indefinitely to resolve the
+# host name of the OpenVPN server.
+resolv-retry infinite
+
+# Most clients don't need to bind to
+# a specific local port number
+nobind
+
+# Try to preserve some state across restarts
+persist-key
+persist-tun
+
+# The cryptographic cipher which should be the
+# same as the server
+cipher AES-256-GCM
+
+# Log file verbosity
+verb 3
+
+# Enable Multi-Factor Authentication
+auth-user-pass
+
+# Prevent the password file from being cached
+auth-nocache
+
+# Prevent re-authorization every 3600 seconds
+reneg-sec 0
+---EOF
+
+# Client conf distributed with non-embedded certs and keys
+cp "$client_conf_path" "${dest_dir}/client/client.conf"
+cat << ---EOF >> "${dest_dir}/client/client.conf"
+
+# SSL/TLS client authentication certificates
+ca ca.crt
+cert $user.crt
+key $user.key
+
+# Require authentication of server peer
+remote-cert-tls server
+
+# As tls-auth key is set on the server
+# the client must also have the key
+tls-auth ta.key 1
+---EOF
+
+# Create mobileconfig file for IOS
+if [[ -z "$vpn_obfuscation_tunnel_port_1" ]]; then
+
+  # Retrieve keys from client conf
+  IFS=$'\n'
+  client_conf=( \
+    $(cat "$client_conf_path" | awk '/^  [a-zA-Z].*/{ print substr($0, 3) }' | tail -2) \
+    $(cat "$client_conf_path" | awk '/^[a-zA-Z].*/{ print $0 }') \
+  )
+  unset IFS
+
+  payload_uuid=$(uuidgen)
+  vpn_payload_uuid=$(uuidgen)
+  vpn_cert_payload_uuid=$(uuidgen)
+  vpn_ca_payload_uuid=$(uuidgen)
+
+  mobileconfig_file=${user_home}/openvpn-config.mobileconfig
+  cat << ---EOF > $mobileconfig_file
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE plist PUBLIC '-//Apple//DTD PLIST 1.0//EN' 'http://www.apple.com/DTDs/PropertyList-1.0.dtd'>
+<plist version='1.0'>
+<dict>
+  <key>PayloadDisplayName</key><string>OpenVPN - ${vpn_server_description}</string>
+  <key>PayloadType</key><string>Configuration</string>
+  <key>PayloadIdentifier</key><string>io.mycs.openvpn.${payload_uuid}</string>
+  <key>PayloadUUID</key><string>${payload_uuid}</string>
+  <key>PayloadVersion</key><integer>1</integer>
+  <key>PayloadRemovalDisallowed</key><false/>  
+  <key>PayloadContent</key>
+  <array>
+
+    <!-- OpenVPN Configuration -->
+    <dict>
+      <key>PayloadDisplayName</key><string>VPN Configuration (${vpn_server})</string>
+      <key>PayloadDescription</key><string>Configures OpenVPN settings</string>
+      <key>PayloadType</key><string>com.apple.vpn.managed</string>
+      <key>PayloadIdentifier</key><string>com.apple.vpn.managed.${vpn_payload_uuid}</string>
+      <key>PayloadUUID</key><string>${vpn_payload_uuid}</string>
+      <key>PayloadVersion</key><integer>1</integer>
+      <key>UserDefinedName</key><string>${vpn_server}</string>
+      <key>VPNType</key><string>VPN</string>
+      <key>VPNSubType</key><string>net.openvpn.connect.app</string>
+
+      <!-- IOS VPN Settings -->
+      <key>UserDefinedName</key><string>${vpn_server}</string>
+      <key>VPN</key>
+      <dict>
+        <key>AuthenticationMethod</key><string>Password</string>
+        <key>RemoteAddress</key><string>DEFAULT</string>
+        <key>AuthName</key><string>DEFAULT</string>
+      </dict>
+      
+      <!-- OpenVPN Client App Configuration -->
+      <key>VendorConfig</key>
+      <dict>
+        <key>vpn-on-demand</key><string>0</string>
+---EOF
+
+  for client_conf in "${client_conf[@]}"; do
+
+    key=$(echo "$client_conf" | cut -d " " -f1)
+    value=$(echo "$client_conf" | cut -d " " -f2-)
+
+    if [[ "$key" == "$value" ]]; then
+      echo "        <key>$key</key><string>NOARGS</string>" >> $mobileconfig_file
+    else
+      echo "        <key>$key</key><string>$value</string>" >> $mobileconfig_file
+    fi
+  done
+
+  cat << ---EOF >> $mobileconfig_file
+        <key>ca</key><string>$(cat /etc/openvpn/ca.crt | awk '$1=$1' ORS='\\n')</string>
+        <key>cert</key><string>$(cat /etc/openvpn/easy-rsa/pki/issued/${user}.crt | awk '$1=$1' ORS='\\n')</string>
+        <key>key</key><string>$(cat /etc/openvpn/easy-rsa/pki/private/${user}.key | awk '$1=$1' ORS='\\n')</string>
+        <key>remote-cert-tls</key><string>server</string>
+        <key>tls-auth</key><string>$(cat /etc/openvpn/ta.key | awk '$1=$1' ORS='\\n')</string>  
+        <key>key-direction</key><string>1</string>
+      </dict>
+
+      <key>IPv4</key>
+      <dict>
+        <key>OverridePrimary</key>
+        <integer>0</integer>
+      </dict>
+
+      <key>Proxies</key>
+      <dict>
+        <key>HTTPEnable</key>
+        <integer>0</integer>
+        <key>HTTPSEnable</key>
+        <integer>0</integer>
+      </dict>      
+    </dict>
+  </array>
+</dict>
+</plist>
+---EOF
+fi
+
+# Embed certs and keys in main ovpn client config
+cat << ---EOF >> "$client_conf_path"
+
+# Embedded SSL/TLS client authentication certificates
+<ca>
+$(cat /etc/openvpn/ca.crt)
+</ca>
+<cert>
+$(cat /etc/openvpn/easy-rsa/pki/issued/${user}.crt)
+</cert>
+<key>
+$(cat /etc/openvpn/easy-rsa/pki/private/${user}.key)
+</key>
+
+# Require authentication of server peer
+remote-cert-tls server
+
+# As tls-auth key is set on the server
+# the client must also have the key
+<tls-auth>
+$(cat /etc/openvpn/ta.key)
+</tls-auth>
+
+# tls-auth key direction
+key-direction 1
+---EOF
+
+pushd /etc/openvpn/users/${user}
+
+#
+# Create Tunnelblick configuration for OSX
+#
+
+mv client "$vpn_server_description.tblk"
+zip -r /etc/openvpn/users/${user}/openvpn-config.tunnelblick.zip "$vpn_server_description.tblk"
+
+#
+# Create OpenVPN client configuration for windows
+#
+
+mv "$vpn_server_description.tblk" "$vpn_server_description"
+mv "$vpn_server_description/client.conf" "$vpn_server_description/${vpn_server_description}.ovpn"
+zip -r /etc/openvpn/users/${user}/openvpn-config.client.zip "${vpn_server_description}"
+
+rm -fr "$vpn_server_description"
+
+popd
+
+[[ ! -e "$dest_dir/client_tunnel" ]] || cp "$dest_dir/client_tunnel" $user_home
+cp "$client_conf_path" $user_home
+cp /etc/openvpn/users/${user}/*.zip $user_home
+cp /var/lib/openvpn/clients/*.dmg $user_home
+cp /var/lib/openvpn/clients/*.msi $user_home
+
+# Fix file permission so Apache 
+# can list this directory
+chown -R $user:$user $user_home
+chmod 0755 ${user_home}
+chmod 0644 ${user_home}/*
+
+# Backup all system user files
+cp /etc/passwd /data/users/etc
+cp /etc/shadow /data/users/etc
+cp /etc/group /data/users/etc
+cp /etc/gshadow /data/users/etc
+cp /etc/ssh/sshd_config /data/users/etc/ssh
+
+set +e

@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -xo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.data_volume_mounted \
+  && -n "$config_data_attached_device_name" ]] || exit 0
+
+# Ensure shared external resources have been configured
+if [[ -n $config_data_shared_external_folder ]]; then
+
+  check_exists=$config_data_shared_external_folder
+  [[ $config_data_shared_external_folder != /vagrant ]] || \
+    check_exists=${check_exists}/Vagrantfile
+
+  echo "waiting 5 minutes for shared external resource to become available"
+  timeout 300 /bin/bash -c \
+    "until stat $check_exists 2>/dev/null; do echo waiting ...; sleep 10; done"
+
+  if [[ $? -ne 0 ]]; then
+    echo "Timed out waiting for shared check_exists '${$check_exists}' to become available."
+    exit 1
+  fi
+fi
+
+if [[ -z "$config_data_mount_directory" \
+  || -z "$config_data_world_readable" ]]; then
+
+  echo "ERROR! Configuration values 'mount_directory' and 'world_readable' not provided."
+  exit 1
+fi
+
+attached_device_name=$config_data_attached_device_name
+mount_directory=$config_data_mount_directory
+world_readable=$config_data_world_readable
+
+# Mount and format the data volume if available and unformatted
+
+i=12
+while [ $i -gt 0 ]; do
+  set +e
+  device="/dev/$(lsblk | grep "$(basename ${attached_device_name})" | head -1 | cut -d" " -f1)"
+  set -e
+
+  if [[ $device == /dev/${attached_device_name} ]]; then
+    break
+  fi
+  echo "Waiting for data volume to be attached..."
+  sleep 5
+  i=$(($i-1))
+done
+
+if [[ $device == /dev/${attached_device_name} ]]; then
+
+  sed -i "s|^/dev/${attached_device_name}\s*${mount_directory}\s*.*$||" /etc/fstab
+
+  device_label="${mount_directory//\//_}"
+
+  # Ensure mount point free
+  set +e
+  umount ${mount_directory} > /dev/null 2>&1  
+  tune2fs -l $device > /dev/null 2>&1
+  if [[ $? -eq 1 ]]; then
+    set -e
+    # Format new volume
+    mkfs.ext4 $device
+    e2label $device $device_label
+  else
+    set -e
+  fi
+
+  # Mount data volume
+  mkdir -p ${mount_directory}
+  echo -e "\nLABEL=${device_label}\t${mount_directory}\text4\tdefaults\t0 2" >> /etc/fstab
+  mount -a
+
+  chown mycs ${mount_directory}
+  if [[ ${world_readable} == true ]]; then
+    chmod a+rwx ${mount_directory}
+  fi
+else
+  echo "WARNING! Timed out waiting for data volume. Proceeding as a new install."
+fi
+
+set +x
+touch /usr/local/etc/.data_volume_mounted

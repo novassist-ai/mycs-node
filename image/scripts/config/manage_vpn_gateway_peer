@@ -1,0 +1,151 @@
+#!/bin/bash
+
+set -eo pipefail
+
+DEBUG=0
+argv=()
+for arg in "$@"; do
+    case "$arg" in
+        -d|--debug) DEBUG=1 ;;
+        *) argv+=("$arg") ;;
+    esac
+done
+set -- "${argv[@]}"
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+[[ $DEBUG -ne 1 ]] && export CONFIGURE_STRONGSWAN_NOTRACE=1
+source "$SCRIPT_HOME/common"
+source "$SCRIPT_HOME/configure_strongswan"
+source "$SCRIPT_HOME/vpn_gateway_common"
+
+if [[ $(whoami) != root ]]; then
+    echo -e "\nThis script needs to be run as root.\n" >&2
+    exit 1
+fi
+
+usage() {
+    cat <<'EOF'
+Usage: manage_vpn_gateway_peer [-d|--debug] <command> [args]
+
+Options:
+  -d, --debug        Enable shell trace (set -x)
+
+Commands:
+  add <peer.yaml>    Install a peer definition and apply tunnel + routing
+  remove <name>      Remove a peer by name
+  list               List configured peers
+  apply              Regenerate swanctl, nftables, and reload strongSwan
+
+Peer YAML (required keys: name, host, remote_cidr, auth):
+
+  name: aws-us-east-1
+  host: test-us-east-1.aws.NnovAassist.ai
+  remote_id: test-us-east-1.aws.NnovAassist.ai
+  local_cidr: 172.20.64.128/26   # optional if vpn_gateway.local_cidr is set in config.yml
+  remote_cidr: 172.20.9.192/26  # comma- or space-separated list supported
+  auth: cert                 # cert | psk
+  send_certreq: yes          # optional; default yes for cert, no for psk
+  include_rw_pool: yes       # optional; default yes — add road-warrior subnet to local_ts
+
+Symmetric peering (default): omit NAT fields. Both sides reach each other's admin
+(and road-warrior pools when configured) with full traffic selectors.
+
+Global default: vpn_gateway.nat in /etc/mycs/config.yml (from Terraform bootstrap).
+Per-peer override: set nat: yes or nat: no in peer YAML.
+
+Asymmetric NAT peering:
+
+  # On the bastion that SNATs toward this peer (outbound only):
+  nat: yes
+  nat_source: 172.20.64.189     # optional; defaults to server.admin_itf_ip
+
+  # On the receiving bastion when the remote site uses NAT:
+  remote_nat: yes
+  remote_nat_source: 172.20.64.189   # remote gateway IP (from peer export nat_source)
+
+Cross-site DNS (from peer export): remote_dns_server and remote_local_zone add a
+DNSDist suffix rule so this bastion forwards the peer's zone(s) to the remote
+DNS (port 53). remote_dns_server may be a comma- or space-separated list; the
+first address is primary, later addresses are backups (separate _backup pool
+with PoolAvailableRule failover). Applied on add/apply; restarts dnsdist. Peer
+downstreams use healthCheckMode='auto' with SOA checks. A background recheck
+restarts dnsdist when the remote site comes online after the first bastion
+was configured.
+
+Bilateral peer setup (two sites):
+
+  1. manage_vpn_gateway_peer add <peer.yaml>   # on bastion A
+  2. manage_vpn_gateway_peer add <peer.yaml>   # on bastion B
+  3. manage_vpn_gateway_peer apply             # on both if cross-site DNS still fails
+
+  remote_dns_server: 172.20.9.253:53
+  # or primary + backup:
+  # remote_dns_server: 155.231.231.2:53, 155.231.231.3:53
+  remote_local_zone: test-us-east-1.local
+
+Road-warrior cross-site (symmetric peers): set remote_peer_vpn_subnet to the
+remote bastion's vpn.subnet when road-warrior VPN is enabled on both sides.
+
+  remote_peer_vpn_subnet: 192.168.111.0/24
+
+  remote_ca: aws-root-ca.pem
+  remote_ca_pem: |
+    -----BEGIN CERTIFICATE-----
+    ...
+  remote_ca_file: /path/to/ca.pem   # optional alternative to remote_ca_pem
+  psk: ""                   # required when auth=psk
+
+IKE / IPsec (optional — per-peer overrides; defaults match common Phase 1/2 policies):
+
+  Fixed defaults (no peer YAML field — always applied):
+    IKE version: 2          # hardcoded as "version = 2" in swanctl; IKEv1 not supported
+    PFS: yes                # enabled by default via ipsec_dh_group (DH in ESP proposal);
+                            # omit DH only with esp_proposals override (e.g. aes256-sha256)
+
+  # Phase 1
+  ike_encryption: aes256      # default: aes256
+  ike_integrity: sha256       # default: sha256
+  ike_dh_group: 14             # default: 14 (modp2048)
+  ike_lifetime: 86400          # default: 86400 (rekey_time, seconds)
+  nat_t: yes                   # default: yes (strongSwan encap / NAT-T)
+
+  # Phase 2
+  ipsec_encryption: aes256     # default: aes256
+  ipsec_integrity: sha256      # default: sha256
+  ipsec_dh_group: 14           # default: 14 (modp2048); presence enables PFS
+  ipsec_lifetime: 43200        # default: 43200 (CHILD SA life_time, seconds)
+
+  # Advanced: raw strongSwan proposal strings (override the fields above)
+  ike_proposals: aes256-sha256-prfsha256-modp2048
+  esp_proposals: aes256-sha256-modp2048
+
+Global IKE/local identity, local_cidr, and crypto defaults also come from vpn_gateway in /etc/mycs/config.yml.
+EOF
+}
+
+cmd=${1:-}
+arg=${2:-}
+
+case "$cmd" in
+    add)
+        vpn_gateway_peer_add "$arg"
+        ;;
+    remove)
+        vpn_gateway_peer_remove "$arg"
+        ;;
+    list)
+        vpn_gateway_list_peers
+        ;;
+    apply)
+        vpn_gateway_apply_all
+        echo "VPN gateway peers applied."
+        ;;
+    -h|--help|help|"")
+        usage
+        ;;
+    *)
+        echo "ERROR! unknown command: $cmd" >&2
+        usage >&2
+        exit 1
+        ;;
+esac

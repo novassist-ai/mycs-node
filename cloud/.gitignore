@@ -1,0 +1,15 @@
+.*
+*.log
+
+*.tfvars
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+*.key
+*-key.*
+*_key.*
+
+tmp/
+packer_cache/
+images/packer/manifest.json

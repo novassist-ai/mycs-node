@@ -1,0 +1,60 @@
+#!/bin/bash
+
+set -eu
+
+if [[ `whoami` != "root" ]]; then 
+  echo -e "\nThis script needs to be run as root.\n"
+  exit 1
+fi
+
+source /etc/mycs/env
+mkdir -p /var/log/wireguard
+shutdown_counter=/var/log/wireguard/shutdown_countdown
+
+space_name=$(echo "select value from mycs_configs where key='spaceName';" | sqlite3 ${MYCS_DB_PATH})
+idle_shutdown_time=$(echo "select value from mycs_configs where key='idleShutdownTime';" | sqlite3 ${MYCS_DB_PATH})
+
+less_than_minute="$(wg | grep 'latest handshake: [0-9]* second' | sed 's|\s*latest handshake: \([0-9]*\) second.*|\1|')"
+if [[ -z $less_than_minute ]]; then
+  
+  # get time since last wg client was connected in mins
+  wg_last_connection="$(wg | grep 'latest handshake: [0-9]* minute' | sed 's|\s*latest handshake: \([0-9]*\) minute.*|\1|' | sort | head -1)"
+  if [[ -z $wg_last_connection || $wg_last_connection -gt $idle_shutdown_time ]]; then
+    # get time since most recent mesh client was seen in mins
+    last_connection=$(echo "select strftime('%s', machines.last_seen) from machines left join mycs_apps on machines.hostname = mycs_apps.app_name where hostname <> '${space_name}' and mycs_apps.app_name IS NULL order by last_seen desc limit 1;" | sqlite3 ${MYCS_DB_PATH})
+    if [[ -n $last_connection ]]; then
+      last_connection=$(( (`date +%s` - last_connection) / 60 ))
+      # ignore if last_connection appears to come from a stale connection
+      [[ $last_connection -lt $((idle_shutdown_time+2)) ]] || last_connection=$wg_last_connection
+    else
+      last_connection=$wg_last_connection
+    fi
+  else
+    last_connection=$wg_last_connection
+  fi
+
+  if [[ $last_connection -gt $idle_shutdown_time ]]; then
+    # shutdown if last connected client was seen 10 mins ago
+    echo $(date +"%Y-%m-%d %H:%M:%S")' Shutting down instance due to inactivity...' >> /var/log/wireguard-status.log
+    shutdown now
+  
+  elif [[ -z $last_connection ]]; then
+    if [[ ! -e $shutdown_counter ]]; then
+      counter=${idle_shutdown_time}
+    else
+      counter=$(cat $shutdown_counter)
+      counter=$((counter-1))
+    fi
+    if [[ $counter -gt 0 ]]; then
+      echo "$counter" > $shutdown_counter
+    else
+      rm -f $shutdown_counter
+      echo $(date +"%Y-%m-%d %H:%M:%S")' Shutting down instance due to inactivity...' >> /var/log/wireguard-status.log
+      shutdown now
+    fi
+  else
+    rm -f $shutdown_counter
+  fi
+else
+  rm -f $shutdown_counter
+fi

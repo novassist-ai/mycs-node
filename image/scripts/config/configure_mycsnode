@@ -1,0 +1,57 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.mycsnode_installed ]] || exit 0
+
+#
+# Enable mycsnode and tailscaled services
+#
+
+if [[ -n $config_mycs_node_id_key ]]; then
+
+  cat << ---EOF >> /etc/mycs/env
+MYCS_DB_PATH=${config_data_mount_directory}/api/data/mycs-service.sqlite
+---EOF
+
+  mkdir -p /var/run/mycs
+  chown -R mycs:root /var/run/mycs
+
+  [[ -e /usr/local/etc/.powerdns_installed ]] || {
+    echo "PowerDNS is not installed. It is required for mycs node to function."
+    exit 0
+  }
+
+  # allows mycs node to create/update shared dns config
+  PDNS_DATA_DIR=${config_data_mount_directory}/powerdns
+  chown -R pdns:mycs $PDNS_DATA_DIR
+  chgrp mycs $PDNS_DATA_DIR
+  chmod g+w $PDNS_DATA_DIR
+  usermod -a -G pdns mycs 
+  usermod -a -G mycs pdns
+
+  systemctl enable mycs-node
+  systemctl start mycs-node
+
+  if [[ -e /usr/local/etc/.powerdns_installed ]]; then
+    # wait for shared lmdb to be created by mycs-node service
+    PDNS_LMDB_FILE=$PDNS_DATA_DIR/pdns.lmdb
+    while [[ ! -e $PDNS_LMDB_FILE ]]; do
+      sleep 1
+    done
+    chown mycs:_dnsdist ${PDNS_LMDB_FILE}*
+    chmod g+w ${PDNS_LMDB_FILE}*
+
+    systemctl start dnsdist.service
+    powerdns_configure_systemd_resolved "$config_powerdns_dns_zones"
+  fi
+
+  systemctl enable mycs-daemon
+  systemctl start mycs-daemon
+fi
+
+set +ex
+touch /usr/local/etc/.mycsnode_installed

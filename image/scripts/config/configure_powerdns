@@ -1,0 +1,382 @@
+#!/bin/bash
+
+set -exo pipefail
+
+SCRIPT_HOME=$(cd $(dirname "$(ls -l $0 | awk '{ print $NF }')") && pwd)
+source $SCRIPT_HOME/common
+
+[[ ! -e /usr/local/etc/.powerdns_installed ]] || {
+  echo "PowerDNS already configured."
+  exit 0
+}
+
+if [[ -z $config_powerdns_dns_zones \
+  || -z $config_powerdns_api_key ]]; then
+  echo "Skipping Power DNS setup as DNS configuration is incomplete."
+  exit 0
+fi
+
+pdnsutil --version 2>/dev/null || true
+pdns_server --version 2>/dev/null || true
+
+PDNS_DATA_DIR=$config_data_mount_directory/powerdns
+mkdir -p $PDNS_DATA_DIR
+
+set +e
+groupadd pdns > /dev/null 2>&1
+useradd -m -g pdns pdns > /dev/null 2>&1
+set -e
+
+allowed_subnets=${config_powerdns_allowed_subnets:-0.0.0.0/0}
+
+PIHOLE_COMPOSE_DIR=/usr/local/lib/cloud-inceptor/pihole
+
+powerdns_pihole_remove_stale() {
+  if [[ ! -f "$PIHOLE_COMPOSE_DIR/docker-compose.yml" ]]; then
+    docker rm -f pihole 2>/dev/null || true
+    return 0
+  fi
+
+  pushd "$PIHOLE_COMPOSE_DIR" >/dev/null
+  docker compose down --remove-orphans 2>/dev/null || true
+  docker rm -f pihole 2>/dev/null || true
+  popd >/dev/null
+}
+
+powerdns_pihole_compose_up() {
+  pushd "$PIHOLE_COMPOSE_DIR" >/dev/null
+  docker compose up -d --force-recreate --remove-orphans
+  popd >/dev/null
+}
+
+powerdns_pihole_running() {
+  docker ps --filter name=^pihole$ --filter status=running --format '{{.Names}}' \
+    | grep -qx pihole
+}
+
+powerdns_wait_for_pihole_compose() {
+  local compose_pid=$1
+  local compose_status attempt
+
+  set +e
+  wait "$compose_pid"
+  compose_status=$?
+  set -e
+
+  if [[ $compose_status -eq 0 ]] && powerdns_pihole_running; then
+    return 0
+  fi
+
+  echo "Pi-Hole compose exited ${compose_status}; retrying after removing stale container state..."
+  for attempt in 1 2 3; do
+    powerdns_pihole_remove_stale
+    if powerdns_pihole_compose_up && powerdns_pihole_running; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "ERROR! Pi-Hole failed to start after retries." >&2
+  docker logs pihole 2>&1 | tail -80 >&2 || true
+  return 1
+}
+
+#
+# Configure Pi-Hole DNS server
+#
+
+mkdir -p /data/pi-hole/etc-pihole
+mkdir -p /data/pi-hole/etc-dnsmasq.d
+mkdir -p /data/pi-hole/etc-pihole-updatelists
+
+cat >/data/pi-hole/etc-pihole-updatelists/custom-adlist <<EOF
+https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_all.list
+https://raw.githubusercontent.com/chadmayfield/my-pihole-blocklists/master/lists/pi_blocklist_porn_top1m.list
+EOF
+
+cat >/data/pi-hole/etc-pihole-updatelists/pihole-updatelists.conf <<EOF
+ADLISTS_URL="https://v.firebog.net/hosts/lists.php?type=tick /etc/pihole-updatelists/custom-adlist"
+WHITELIST_URL="https://raw.githubusercontent.com/anudeepND/whitelist/master/domains/whitelist.txt"
+REGEX_WHITELIST_URL=""
+BLACKLIST_URL=""
+REGEX_BLACKLIST_URL="https://raw.githubusercontent.com/mmotti/pihole-regex/master/regex.list"
+EOF
+
+if [[ -f /usr/local/lib/cloud-inceptor/pihole.tgz ]]; then
+  HOME=$(pwd) \
+    docker load < /usr/local/lib/cloud-inceptor/pihole.tgz
+  rm -f /usr/local/lib/cloud-inceptor/pihole.tgz
+elif ! docker image inspect mycs/pihole:latest >/dev/null 2>&1; then
+  echo "ERROR! Pi-hole image not loaded and /usr/local/lib/cloud-inceptor/pihole.tgz is missing." >&2
+  exit 1
+fi
+
+mkdir -p "$PIHOLE_COMPOSE_DIR"
+pushd "$PIHOLE_COMPOSE_DIR"
+
+cat >docker-compose.yml <<EOF
+# More info at https://github.com/pi-hole/docker-pi-hole/ and https://docs.pi-hole.net/
+services:
+  pihole:
+    container_name: pihole
+    image: mycs/pihole:latest
+    ports:
+      - '127.0.0.1:5301:53/tcp'
+      - '127.0.0.1:5301:53/udp'
+      - '${config_powerdns_ns_ip}:9080:80/tcp'
+      - '${config_powerdns_ns_ip}:9443:443/tcp'
+    environment:
+      TZ: '$config_server_time_zone'
+      WEBPASSWORD: '${config_server_admin_passwd}'
+      PIHOLE_DNS_: ${config_powerdns_ns_ip}#5300
+    # Volumes store your data between container upgrades
+    volumes:
+      - '/data/pi-hole/etc-pihole/:/etc/pihole/'
+      - '/data/pi-hole/etc-dnsmasq.d/:/etc/dnsmasq.d/'    
+      - '/data/pi-hole/etc-pihole-updatelists/:/etc/pihole-updatelists/'
+    restart: unless-stopped
+EOF
+
+cat >update_lists <<'EOF'
+#!/bin/bash
+
+# sets HOME env var if not set 
+# to current working directory
+export HOME=${HOME:-$(pwd)}
+
+pihole_cid=$(docker ps -a | awk '/pihole/{ print $1 }')
+
+echo "$(date +'%a %Y-%m-%d %H:%M:%S'): Starting Pi-Hole lists update..." \
+  >> /var/log/pihole-lists-update.log
+start=$(date +%s)
+docker exec $pihole_cid /usr/local/sbin/pihole-updatelists 2>&1 \
+  >> /var/log/pihole-lists-update.log
+end=$(date +%s)
+echo "$(date +'%a %Y-%m-%d %H:%M:%S'): Pi-Hole lists update completed in $((end-start)) seconds." \
+  >> /var/log/pihole-lists-update.log
+EOF
+chmod +x update_lists
+
+cat >/etc/cron.d/pihole_update_lists <<'EOF'
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+0 3 * * 6   root    test -x /usr/local/lib/cloud-inceptor/pihole/update_lists && /usr/local/lib/cloud-inceptor/pihole/update_lists
+EOF
+
+powerdns_pihole_remove_stale
+docker compose up -d --force-recreate --remove-orphans 2>&1 &
+pihole_startup_pid=$!
+popd
+
+#
+# Configure the Authoritative server to listen on the loopback address
+#
+
+sed -i -E "s|^(# )?local-address=.*|local-address=127.0.0.1|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?local-port=.*|local-port=5300|" /etc/powerdns/pdns.conf
+
+# Allow DNS updates on the Authoritative server
+sed -i -E "s|^(# )?dnsupdate=.*|dnsupdate=yes|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?allow-dnsupdate-from=.*|allow-dnsupdate-from=${allowed_subnets}|" /etc/powerdns/pdns.conf
+
+# Configure API server on the Authoritative server
+sed -i -E "s|^(# )?webserver=.*|webserver=yes|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?webserver-address=.*|webserver-address=${config_powerdns_ns_ip}|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?webserver-port=.*|webserver-port=${config_powerdns_api_port}|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?webserver-allow-from=.*|webserver-allow-from=${allowed_subnets},127.0.0.1,::1|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?api=.*|api=yes|" /etc/powerdns/pdns.conf
+sed -i -E "s|^(# )?api-key=.*|api-key=${config_powerdns_api_key}|" /etc/powerdns/pdns.conf
+
+# Configure SQL Lite backend for the Authoritative server
+sed -i -E 's|^launch=.*|launch=gsqlite3|' /etc/powerdns/pdns.conf
+sed -i -E 's|^(# )?include-dir=.*|include-dir=|' /etc/powerdns/pdns.conf
+rm -f /etc/powerdns/pdns.d/*.conf
+echo "gsqlite3-database=$PDNS_DATA_DIR/pdns.sqlite3" >> /etc/powerdns/pdns.conf
+echo "gsqlite3-pragma-synchronous=4" >> /etc/powerdns/pdns.conf
+
+if [[ ! -e $PDNS_DATA_DIR/pdns.sqlite3 ]]; then
+  sqlite3 $PDNS_DATA_DIR/pdns.sqlite3 \
+    < /usr/share/pdns-backend-sqlite3/schema/schema.sqlite3.sql
+fi
+chown -R pdns:pdns $PDNS_DATA_DIR
+
+systemctl enable pdns.service
+systemctl start pdns.service
+
+#
+# Configure the recursor (PDNS 5.x uses YAML; legacy local-address= sed is ignored)
+#
+
+powerdns_configure_recursor "$config_powerdns_ns_ip"
+
+# Configure local zones on Authoritative server
+local_domains=""
+
+first=Y
+for zone in $config_powerdns_dns_zones; do
+
+  if [[ -n $first ]]; then 
+    echo "$zone=127.0.0.1:5300" > /etc/powerdns/forward-zones.conf
+    unset first
+  else
+    echo "$zone=127.0.0.1:5300" >> /etc/powerdns/forward-zones.conf
+  fi
+  local_domains="$zone $local_domains"
+
+  set +e
+  pdnsutil list-zone "$zone" > /dev/null 2>&1
+  if [[ $? -ne 0 ]]; then
+    pdnsutil create-zone "$zone" "ns1.$zone"
+    pdnsutil add-record "$zone" "ns1.$zone" A "$config_powerdns_ns_ip"
+
+    parent_zone=${zone#*.}
+    if [[ -n $parent_zone && $parent_zone != $zone ]]; then
+      pdnsutil list-zone "$parent_zone" > /dev/null 2>&1
+      if [[ $? -eq 0 ]]; then
+        pdnsutil add-record "$parent_zone" "$zone" NS "ns1.$zone"
+      fi
+    fi
+  fi
+  set -e
+done
+
+echo -e "\n+.=$config_server_dns_resolvers" >> /etc/powerdns/forward-zones.conf
+
+systemctl enable pdns-recursor.service
+systemctl start pdns-recursor.service
+
+#
+# Configure DNSDist load balancer
+#
+
+cat << ---EOF > /etc/dnsdist/dnsdist.conf
+setLocal('${config_powerdns_ns_ip}:53')
+setACL({'0.0.0.0/0', '::/0'}) -- Allow all IPs access
+
+newServer({address='${config_powerdns_ns_ip}:5300', pool='recursor'})
+
+newServer({address='127.0.0.1:5300', pool='auth'})
+newServer({address='127.0.0.1:5301', pool='pihole'})
+
+-- BEGIN VPN gateway peer DNS (managed by manage_vpn_gateway_peer)
+-- END VPN gateway peer DNS
+
+---EOF
+
+# LAN zones: send to recursor before Pi-Hole (VPN clients cannot resolve .local via Pi-Hole).
+for zone in $config_powerdns_dns_zones; do
+  if [[ -z $dnsdist_local_zones_started ]]; then
+    cat << ---EOF >> /etc/dnsdist/dnsdist.conf
+smn = newSuffixMatchNode()
+---EOF
+    dnsdist_local_zones_started=1
+  fi
+  echo "smn:add('${zone}')" >> /etc/dnsdist/dnsdist.conf
+done
+if [[ -n $dnsdist_local_zones_started ]]; then
+  cat << ---EOF >> /etc/dnsdist/dnsdist.conf
+addAction(SuffixMatchNodeRule(smn), PoolAction('recursor'))
+
+---EOF
+fi
+
+cat << ---EOF >> /etc/dnsdist/dnsdist.conf
+recursive_ips = newNMG() -- These network masks are the ones from allow-recursion
+                         -- in the Authoritative Server
+---EOF
+
+for nw in $(echo ${allowed_subnets} | sed 's|,| |'); do
+  echo "recursive_ips:addMask('${nw}')" >> /etc/dnsdist/dnsdist.conf
+done
+
+if [[ -n $config_mycs_node_id_key ]]; then
+cat << ---EOF >> /etc/dnsdist/dnsdist.conf
+recursive_ips:addMask('10.0.0.0/8')
+
+kvs = newLMDBKVStore('$PDNS_DATA_DIR/pdns.lmdb', 'kvrules')
+
+addAction(KeyValueStoreLookupRule(kvs, KeyValueLookupKeySourceIP()), PoolAction('pihole'))
+---EOF
+fi
+
+cat << ---EOF >> /etc/dnsdist/dnsdist.conf
+addAction(NetmaskGroupRule(recursive_ips), PoolAction('recursor'))
+
+dns_sink_ips = newNMG() -- These network masks are a subset of the recursive IPs
+                        -- that need to be protected via the Pi-Hole DNS Sink
+dns_sink_ips:addMask('${config_vpn_restricted_subnet}')
+addAction(NetmaskGroupRule(dns_sink_ips), PoolAction('pihole'))
+
+addAction(AllRule(), PoolAction('auth'))
+---EOF
+
+# Wait for Pi-Hole container (compose runs in parallel with pdns/dnsdist setup above)
+powerdns_wait_for_pihole_compose "$pihole_startup_pid"
+docker logs pihole 2>&1 | tail -40
+
+# Wait for pihole dns service to come up
+set +e
+i=0
+while [[ $i -lt 30 ]]; do
+  nslookup -port=5301 www.google.com 127.0.0.1 2>&1 > /dev/null
+  [[ $? -ne 0 ]] || break
+  sleep 1
+  i=$(($i+1))
+done
+if [[ $i -eq 30 ]]; then
+  echo "ERROR! Timed out waiting for Pi-Hole to come up."
+  exit 1
+fi
+set -e
+
+if [[ $config_server_enable_dhcpd == true ]]; then
+  
+  # Update DHCP daemon's config
+  sed -i "s|^  option domain-name-servers.*$|  option domain-name-servers  $config_powerdns_ns_ip;|" \
+    /etc/dhcp/dhcpd.conf
+
+  systemctl restart isc-dhcp-server.service
+fi
+
+# Create local DNS mappings
+for dns_mapping in $config_powerdns_dns_records; do
+  
+  address=${dns_mapping##*:}
+  name=${dns_mapping%%:*}
+  zone=${name#*.}
+  host=${name%%.*}
+  
+  if [[ "$host" == "*" ]]; then
+    temp=$(echo $name | sed 's|*.|_|')
+    zone=${temp#*.}
+    host=$(echo "${temp%%.*}" | sed 's|_|*.|')
+  fi
+
+  set +e
+  pdnsutil list-zone "$zone" 2>/dev/null | grep -Fq "$name"
+  if [[ $? -ne 0 ]]; then
+    pdnsutil add-record "$zone" "$name" A "$address"
+  fi
+  set -e
+done
+
+sleep 5
+systemctl restart pdns.service
+sleep 5
+systemctl restart pdns-recursor.service
+
+# Start job to update pihole blocklists
+nohup /usr/local/lib/cloud-inceptor/pihole/update_lists \
+  >/var/log/pihole-lists-update.log 2>&1 &
+
+# enable and start local dns
+systemctl enable dnsdist.service
+if [[ -n $config_mycs_node_id_key ]]; then
+  echo "Deferring dnsdist and systemd-resolved until mycs-node has started."
+else
+  systemctl start dnsdist.service
+  powerdns_configure_systemd_resolved "$local_domains"
+fi
+
+set +ex
+touch /usr/local/etc/.powerdns_installed

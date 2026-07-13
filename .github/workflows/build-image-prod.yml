@@ -1,0 +1,115 @@
+name: Build Bastion Images (prod)
+concurrency: build-image-prod
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "image/build/**"
+      - "image/packer/**"
+      - "image/scripts/**"
+      - "image/www/**"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  create-release-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release-tag.outputs.version }}
+      bastion_image_name: ${{ steps.release-tag.outputs.bastion_image_name }}
+
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      VERSION: "0.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release tag
+        id: release-tag
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          set +e
+          last_tag=$(git for-each-ref \
+            --sort=-creatordate \
+            --format '%(refname)' refs/tags \
+            | grep "refs/tags/${VERSION}" \
+            | head -1)
+          set -e
+
+          build_number=$(basename "$last_tag" | cut -d '.' -f3)
+          [[ -n $build_number ]] || build_number=-1
+          release_tag=${VERSION}.$((build_number+1))
+          last_commit_msg=$(git log -1 --pretty=%B)
+
+          echo "Creating release tag ${release_tag}..."
+          git tag -a "${release_tag}" -m "$last_commit_msg"
+          git push --follow-tags
+
+          echo "version=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "bastion_image_name=mycs-bastion_${release_tag}" >> "$GITHUB_OUTPUT"
+
+  build-aws-image:
+    needs: create-release-tag
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      VERSION: ${{ needs.create-release-tag.outputs.version }}
+      IS_DEV_BUILD: "no"
+      MYCS_NODE_RELEASE_REPO: appbricks/mycloudspace-node
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release-tag.outputs.version }}
+
+      - name: Run build
+        run: |
+          build/build-aws-image.sh us-east-1 "$VERSION"
+
+      - name: Publish image
+        run: |
+          build/publish-aws-image.sh us-east-1 "$VERSION"
+
+  trigger-node-builder:
+    needs:
+      - create-release-tag
+      - build-aws-image
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Trigger node-builder Docker build
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: build-node-builder-prod.yml
+          ref: ${{ github.ref }}
+          token: ${{ github.token }}
+          inputs: |
+            {
+              "bastion_image_name": "${{ needs.create-release-tag.outputs.bastion_image_name }}",
+              "image_tag": "${{ needs.create-release-tag.outputs.version }}"
+            }

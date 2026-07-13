@@ -1,0 +1,17 @@
+.*
+*.log
+
+*.tfvars
+*.tfstate
+*.tfstate.backup
+
+*.key
+*-key.*
+*_key.*
+*.creds
+*-creds.*
+*_creds.*
+
+tmp/
+packer_cache/
+images/packer/manifest.json

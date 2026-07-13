@@ -1,0 +1,513 @@
+#!/bin/bash
+
+rm -rf /var/lib/apt/lists/*
+echo "waiting 180 seconds for cloud-init to update /etc/apt/sources.list"
+timeout 180 /bin/bash -c \
+  'until stat /var/lib/cloud/instance/boot-finished 2>/dev/null; do echo waiting ...; sleep 1; done'
+
+if [[ $? -ne 0 ]]; then
+  echo "Timed out waiting for cloud-init to complete boot phase."
+  exit 1
+fi
+
+set -xeu
+
+osname=$(uname -s)
+osarch=$(uname -m)
+
+case $osarch in
+  aarch64)
+    binary_arch=arm64
+    ;;
+  x86_64)
+    binary_arch=amd64
+    ;;
+  *)
+    echo "OS architecture '${osarch}' not supported."
+    exit 1
+esac 
+
+export DEBIAN_FRONTEND=noninteractive
+echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
+# See https://github.com/jawj/IKEv2-setup/issues/66 and https://bugs.launchpad.net/subiquity/+bug/1783129
+# Note: software-properties-common is required for add-apt-repository
+apt-get -o Acquire::ForceIPv4=true update
+apt-get -o Acquire::ForceIPv4=true install -y \
+  software-properties-common gnupg ca-certificates curl
+add-apt-repository universe
+add-apt-repository restricted
+add-apt-repository multiverse
+
+# Setup apache2 repo from packages.sury.org.
+# The Launchpad ppa:ondrej/apache2 PPA has no Ubuntu 26.04 (resolute) release.
+curl -sSLo /tmp/debsuryorg-archive-keyring.deb \
+  https://packages.sury.org/debsuryorg-archive-keyring.deb
+dpkg -i /tmp/debsuryorg-archive-keyring.deb
+echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/apache2/ $(lsb_release -cs) main" \
+  > /etc/apt/sources.list.d/apache2.list
+
+# Setup python repos
+add-apt-repository ppa:deadsnakes/ppa
+
+# Third-party repos: apt-key was removed in Ubuntu 24.04+ (including 26.04).
+# Keys are stored in /etc/apt/keyrings and referenced via signed-by.
+install -m 0755 -d /etc/apt/keyrings
+
+# Setup Docker repo
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=${binary_arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+  > /etc/apt/sources.list.d/docker.list
+
+# Setup OpenVPN repo
+curl -fsSL https://swupdate.openvpn.net/repos/repo-public.gpg \
+  | gpg --dearmor -o /etc/apt/keyrings/openvpn-repo-public.gpg
+chmod a+r /etc/apt/keyrings/openvpn-repo-public.gpg
+echo "deb [signed-by=/etc/apt/keyrings/openvpn-repo-public.gpg] http://build.openvpn.net/debian/openvpn/release/2.7 $(lsb_release -cs) main" \
+  > /etc/apt/sources.list.d/openvpn.list
+
+# Update and upgrade the distribution
+apt-get update
+apt-get -o Acquire::ForceIPv4=true dist-upgrade -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+
+apt autoremove -y
+
+# Ubuntu 25.10+ ships libxml2 2.15 as package libxml2-16 (SONAME libxml2.so.16).
+# apt-cache show libxml2 can succeed even when the package is not installable.
+libxml2_runtime_pkg=libxml2-16
+libxml2_candidate=$(apt-cache policy libxml2 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+if [[ -n "$libxml2_candidate" && "$libxml2_candidate" != "(none)" ]]; then
+  libxml2_runtime_pkg=libxml2
+fi
+
+# Install pre-req packages
+apt-get -o Acquire::ForceIPv4=true install -y \
+  language-pack-en pkg-config unattended-upgrades nftables net-tools ipcalc \
+  cmake build-essential openssl libcurl4-openssl-dev libssl-dev libffi-dev \
+  "${libxml2_runtime_pkg}" libxml2-dev \
+  git expect sqlite3 certbot uuid-runtime pinentry-curses xclip sshpass zip \
+  python3 python3-dev python3-pip python-is-python3
+
+# Bastion manages firewall rules via configure_network and rc.local
+systemctl disable nftables.service 2>/dev/null || true
+rm -f /etc/nftables.conf
+
+# Setup unattended upgrades
+sed -r \
+  -e 's|^//Unattended-Upgrade::MinimalSteps "true";$|Unattended-Upgrade::MinimalSteps "true";|' \
+  -e 's|^//Unattended-Upgrade::Automatic-Reboot "false";$|Unattended-Upgrade::Automatic-Reboot "true";|' \
+  -e 's|^//Unattended-Upgrade::Remove-Unused-Dependencies "false";|Unattended-Upgrade::Remove-Unused-Dependencies "true";|' \
+  -e 's|^//Unattended-Upgrade::Automatic-Reboot-Time "02:00";$|Unattended-Upgrade::Automatic-Reboot-Time "03:00";|' \
+  -i /etc/apt/apt.conf.d/50unattended-upgrades
+
+echo 'APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Unattended-Upgrade "1";
+' > /etc/apt/apt.conf.d/10periodic
+
+# Disable sshguard if it is installed
+apt-get -o Acquire::ForceIPv4=true install -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+  sshguard
+
+systemctl stop sshguard
+systemctl disable sshguard
+
+# DHCP
+apt-get -o Acquire::ForceIPv4=true install -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+  isc-dhcp-server
+
+systemctl stop isc-dhcp-server.service
+systemctl disable isc-dhcp-server.service
+systemctl stop isc-dhcp-server6.service
+systemctl disable isc-dhcp-server6.service
+
+# NTP (classic ntp removed on Ubuntu 26.04; ntpsec is the replacement)
+ntp_pkg=ntp
+ntp_candidate=$(apt-cache policy ntp 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+if [[ -z "$ntp_candidate" || "$ntp_candidate" == "(none)" ]]; then
+  ntp_pkg=ntpsec
+fi
+apt-get -o Acquire::ForceIPv4=true install -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+  "$ntp_pkg"
+
+# Set back-up DNS
+mkdir -p /etc/resolvconf/resolv.conf.d
+echo -e "nameserver 8.8.8.8\nnameserver 8.8.4.4" > /etc/resolvconf/resolv.conf.d/tail
+
+# PowerDNS from repo.powerdns.com (Ubuntu 26.04 Resolute).
+# https://repo.powerdns.com/ — auth-51 and dnsdist-21; recursor from Ubuntu universe.
+install -d /etc/apt/keyrings
+curl -fsSL https://repo.powerdns.com/FD380FBB-pub.asc \
+  -o /etc/apt/keyrings/pdns-FD380FBB-pub.asc
+cat <<'EOF' > /etc/apt/sources.list.d/pdns.list
+deb [signed-by=/etc/apt/keyrings/pdns-FD380FBB-pub.asc] http://repo.powerdns.com/ubuntu resolute-auth-51 main
+deb [signed-by=/etc/apt/keyrings/pdns-FD380FBB-pub.asc] http://repo.powerdns.com/ubuntu resolute-dnsdist-21 main
+EOF
+cat <<'EOF' > /etc/apt/preferences.d/pdns
+Package: pdns-* dnsdist*
+Pin: origin repo.powerdns.com
+Pin-Priority: 600
+EOF
+apt-get -o Acquire::ForceIPv4=true update
+
+apt-get -o Acquire::ForceIPv4=true install -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+  pdns-server pdns-backend-sqlite3
+
+systemctl stop pdns.service
+systemctl disable pdns.service
+
+# Need give some time for PDNS service to
+# stop otherwise recursor install fails
+sleep 5
+
+apt-get -o Acquire::ForceIPv4=true install -y -q \
+  --allow-downgrades \
+  --allow-remove-essential \
+  --allow-change-held-packages \
+  pdns-recursor dnsdist
+
+systemctl stop pdns-recursor.service
+systemctl disable pdns-recursor.service
+
+systemctl stop dnsdist.service
+systemctl disable dnsdist.service
+
+pdns_server --version
+pdns_recursor --version
+dnsdist --version
+
+# Wireguard
+apt-get install -y wireguard
+
+# StrongSwan IPSec (Ubuntu 24.04+ uses charon-systemd/swanctl; starter is obsolete)
+apt-get -o Acquire::ForceIPv4=true install -y \
+  charon-systemd strongswan-swanctl strongswan-pki libtss2-tcti-tabrmd0 \
+  libstrongswan-extra-plugins libcharon-extra-plugins libcharon-extauth-plugins 
+
+# Disable StrongSwan until configure_strongswan or configure_vpn_gateway runs
+systemctl stop strongswan.service 2>/dev/null || true
+systemctl disable strongswan.service 2>/dev/null || true
+
+# OpenVPN
+apt-get -o Acquire::ForceIPv4=true install -y whois openvpn easy-rsa libpam-google-authenticator
+systemctl stop openvpn
+systemctl disable openvpn
+
+tblk_version="3.8.4a_build_5601"
+openvpn_connect_version="v3"
+
+mkdir -p /var/lib/openvpn/clients
+curl -L https://tunnelblick.net/release/Tunnelblick_${tblk_version}.dmg \
+  -o /var/lib/openvpn/clients/tunnelblick_macos.dmg
+curl -L https://openvpn.net/downloads/openvpn-connect-${openvpn_connect_version}-windows.msi \
+  -o /var/lib/openvpn/clients/openvpn-connect-win64.msi
+curl -L https://openvpn.net/downloads/openvpn-connect-${openvpn_connect_version}-windows-x86.msi \
+  -o /var/lib/openvpn/clients/openvpn-install-win32.msi
+
+# Compile UDP Tunnel binaries (EXPERIMENTAL)
+git clone https://github.com/wangyu-/UDPspeeder.git /tmp/udp-speeder
+pushd /tmp/udp-speeder
+git checkout branch_libev
+make
+mv /tmp/udp-speeder/speederv2 /usr/local/bin/udp-speeder
+popd
+
+git clone https://github.com/wangyu-/udp2raw-tunnel.git /tmp/udp2raw-tunnel
+pushd /tmp/udp2raw-tunnel
+git checkout master
+make
+mv /tmp/udp2raw-tunnel/udp2raw /usr/local/bin/udp2raw
+popd
+
+# Build KCP tunnel server (EXPERIMENTAL).
+# xtaci/kcptun releases were removed when the repo was archived; build from a mirror.
+apt-get -o Acquire::ForceIPv4=true install -y golang-go
+git clone --depth 1 https://github.com/kongkx/kcptun-archive.git /tmp/kcptun
+pushd /tmp/kcptun
+go build -mod=vendor -ldflags "-s -w" -o /usr/local/bin/kcptun-server ./server
+popd
+rm -rf /tmp/kcptun
+
+# golang-go can orphan networkd-dispatcher; autoremove removes it and drops SSH on EC2.
+apt-mark manual networkd-dispatcher 2>/dev/null || true
+apt-get remove -y golang-go
+apt-get autoremove -y
+
+# Apache Web Server
+apt-get -o Acquire::ForceIPv4=true install -y apache2 apache2-utils libapache2-mod-authnz-external pwauth
+systemctl stop apache2
+systemctl disable apache2
+
+# LetsEncrypt configuration for certbot
+mkdir -p /etc/letsencrypt
+cat << ---EOF > /etc/letsencrypt/cli.ini
+rsa-key-size = 4096
+pre-hook = /usr/sbin/nft add rule inet mycs_filter input tcp dport 80 accept
+post-hook = /usr/sbin/nft delete rule inet mycs_filter input tcp dport 80 accept
+renew-hook = /bin/sh -c 'command -v ipsec >/dev/null && ipsec reload && ipsec secrets || swanctl --load-all'
+---EOF
+
+# Any static content will be copied here
+mkdir -p /var/www/html
+
+# SMTP
+apt-get -o Acquire::ForceIPv4=true install -y postfix libsasl2-modules postfix-policyd-spf-python mailutils
+systemctl stop postfix
+systemctl disable postfix
+
+# Squid Proxy
+apt-get -o Acquire::ForceIPv4=true install -y squid
+systemctl stop squid
+systemctl disable squid
+
+# Docker
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+usermod -aG docker ubuntu
+
+# Download and save OpenSSL 1.1.1 docker image
+docker pull shamelesscookie/openssl:1.1.1s
+docker save shamelesscookie/openssl:1.1.1s | gzip > /tmp/inceptor-scripts/openssl_1.1.1s.tgz
+docker rmi shamelesscookie/openssl:1.1.1s
+
+# Download and build Pi-Hole docker image with updatelists tool
+mkdir /tmp/pi-hole-build
+pushd /tmp/pi-hole-build
+cat << ---EOF > Dockerfile
+FROM pihole/pihole:latest
+
+RUN apk update && \
+  apk add --no-cache wget php-cli php-sqlite3 php-intl php-curl && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN wget -O - https://raw.githubusercontent.com/jacklul/pihole-updatelists/master/install.sh | bash
+---EOF
+docker build . -t mycs/pihole:latest
+popd
+
+docker save mycs/pihole:latest | gzip > /tmp/inceptor-scripts/pihole.tgz
+docker rmi mycs/pihole:latest
+docker system prune -a
+
+systemctl stop docker
+systemctl disable docker
+
+# Remove docker default data folder
+rm -fr /var/lib/docker
+
+# Install mycloudspace-node service
+useradd mycs -p $(openssl rand -base64 32)
+
+cat << ---EOF >> /etc/security/limits.conf
+
+# file limits for root user running node services
+root soft nofile 8192
+root hard nofile 8192
+
+# file limits for mycs user node services
+mycs soft nofile 8192
+mycs hard nofile 8192
+---EOF
+
+pushd /tmp/download
+unzip mycs-node_linux_${binary_arch}.zip
+mv mycs-node /usr/local/bin
+mv mycs-daemon /usr/local/bin
+mv headscale /usr/local/bin
+mv tailscaled /usr/local/bin
+mv tailscale /usr/local/bin
+
+mkdir -p /etc/mycs
+mv version /etc/mycs
+mv mycs-key-* /etc/mycs
+chown -R mycs:root /etc/mycs
+popd
+
+# not enable provided for debugging tailscale mesh issues
+cat << ---EOF > /etc/systemd/system/tailscaled.service
+[Unit]
+Description=Tailscale Daemon Service
+Wants=network.target
+After=network.target NetworkManager.service systemd-resolved.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tailscaled
+EnvironmentFile=/etc/default/tailscaled
+ExecStartPre=/usr/local/bin/tailscaled --cleanup
+ExecStart=/usr/local/bin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/run/tailscale/tailscaled.sock \$FLAGS
+Restart=on-failure
+RuntimeDirectory=tailscale
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+systemctl disable tailscaled
+
+cat << ---EOF > /etc/systemd/system/mycs-node.service
+[Unit]
+Description=MyCloudSpace Node Control Service
+Wants=network.target
+After=network.target NetworkManager.service systemd-resolved.service
+
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=mycs
+StandardOutput=journal
+StandardError=journal
+# Environment=CBS_LOGLEVEL=trace
+SyslogIdentifier=mycs-node
+ExecStart=/usr/local/bin/mycs-node
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+systemctl disable mycs-node
+
+cat << ---EOF > /etc/systemd/system/mycs-daemon.service
+[Unit]
+Description=MyCloudSpace Node Tailscale Daemon Service
+Wants=network.target
+After=network.target NetworkManager.service systemd-resolved.service mycs-node.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mycs-daemon
+# Environment=CBS_LOGLEVEL=trace
+ExecStartPre=/usr/local/bin/tailscaled --cleanup
+ExecStartPre=-/usr/sbin/nft delete table inet mycs_filter
+ExecStartPre=-/usr/sbin/nft delete table ip mycs_nat
+ExecStartPre=-/usr/sbin/nft delete table ip mycs_mangle
+ExecStart=/usr/local/bin/mycs-daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+---EOF
+systemctl disable mycs-daemon
+
+# setup headscale cli config
+
+mkdir -p /etc/headscale
+cat << ---EOF > /etc/headscale/config.yml
+---
+server_url: http://127.0.0.1:9081
+unix_socket: /var/run/mycs/headscale.sock
+grpc_allow_insecure: false
+noise:
+  private_key_path: /data/api/data/control_service.key
+ip_prefixes:
+  - fd7a:115c:a1e0::/48
+  - 100.64.0.0/10
+#log:
+#  level: debug
+---EOF
+
+# TODO: Create derp server list in /etc/headscale/derp.yaml
+
+# Setup cloud-inceptor initialization scripts
+rm /tmp/inceptor-scripts/install_packages
+mv /tmp/inceptor-scripts/rc.local /etc/rc.local
+
+mv /tmp/inceptor-scripts /usr/local/lib/cloud-inceptor
+
+# Copy static web content
+mv /tmp/www-static-home/* /var/www/html
+
+# Configure logrotate to minimize logs
+cat << ---EOF > /etc/logrotate.d/rsyslog
+/var/log/syslog
+{
+  rotate 0
+  daily
+  maxsize 1G
+  missingok
+  notifempty
+  delaycompress
+  compress
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}
+
+/var/log/mail.info
+/var/log/mail.warn
+/var/log/mail.err
+/var/log/mail.log
+/var/log/daemon.log
+/var/log/kern.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/lpr.log
+/var/log/cron.log
+/var/log/debug
+/var/log/messages
+{
+  rotate 0
+  weekly
+  maxsize 1G
+  missingok
+  notifempty
+  compress
+  delaycompress
+  sharedscripts
+  postrotate
+    /usr/lib/rsyslog/rsyslog-rotate
+  endscript
+}
+---EOF
+
+# Remove all authorized keys
+rm -f /home/ubuntu/.ssh/authorized_keys
+rm -f /root/.ssh/authorized_keys
+# Clear all logs
+find /var/log/* -name "*.log" -type f -exec cat /dev/null > {} \;
+# Clean cloud-init
+cloud-init clean -l
+# Delete cache and temp files
+set +e
+apt-mark manual networkd-dispatcher 2>/dev/null || true
+apt autoremove --purge -y
+apt autoclean -y
+apt clean -y
+rm -rf /var/lib/apt/lists/*
+rm -fr /tmp/*
+
+set +x
