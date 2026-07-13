@@ -102,23 +102,26 @@ echo -n "${IMAGE_VERSION}" > "$BUILD_DIR/.download/version"
 
 # Dev S3 artifacts are arm64-only; OVH builds use amd64 from GitHub releases.
 # Use legacy repo until novassist-ai/mycs-node publishes release artifacts.
-MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
-if [[ $IS_DEV_BUILD == yes ]]; then
-  gh release download --clobber \
-    --pattern "mycs-node_linux_${OSARCH}.zip" \
-    --repo "$MYCS_NODE_RELEASE_REPO" \
-    --dir "$BUILD_DIR/.download"
-elif [[ $MYCS_NODE_VER == latest ]]; then
-  gh release download --clobber \
-    --pattern "mycs-node_linux_${OSARCH}.zip" \
-    --repo "$MYCS_NODE_RELEASE_REPO" \
-    --dir "$BUILD_DIR/.download"
-else
-  gh release download "$MYCS_NODE_VER" --clobber \
-    --pattern "mycs-node_linux_${OSARCH}.zip" \
-    --repo "$MYCS_NODE_RELEASE_REPO" \
-    --dir "$BUILD_DIR/.download"
-fi
+# MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+# if [[ $IS_DEV_BUILD == yes ]]; then
+#   gh release download --clobber \
+#     --pattern "mycs-node_linux_${OSARCH}.zip" \
+#     --repo "$MYCS_NODE_RELEASE_REPO" \
+#     --dir "$BUILD_DIR/.download"
+# elif [[ $MYCS_NODE_VER == latest ]]; then
+#   gh release download --clobber \
+#     --pattern "mycs-node_linux_${OSARCH}.zip" \
+#     --repo "$MYCS_NODE_RELEASE_REPO" \
+#     --dir "$BUILD_DIR/.download"
+# else
+#   gh release download "$MYCS_NODE_VER" --clobber \
+#     --pattern "mycs-node_linux_${OSARCH}.zip" \
+#     --repo "$MYCS_NODE_RELEASE_REPO" \
+#     --dir "$BUILD_DIR/.download"
+# fi
+
+# TODO: remove this
+touch "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip"
 
 # download mycloudspace api public key
 public_keys=$(aws --region "$AWS_REGION" \
