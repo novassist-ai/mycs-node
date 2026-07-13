@@ -83,13 +83,16 @@ rm -fr $BUILD_DIR/.build $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${BOX_VERSION}" > $BUILD_DIR/.download/version
 
-if [[ $IS_DEV_BUILD == yes ]]; then
-  aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
-elif [[ $MYCS_NODE_VER == latest ]]; then
-  gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
-else
-  gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
-fi
+# if [[ $IS_DEV_BUILD == yes ]]; then
+#   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
+# elif [[ $MYCS_NODE_VER == latest ]]; then
+#   gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
+# else
+#   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
+# fi
+
+# TODO: remove this
+touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
 
 # download mycloudspace api public key
 public_keys=$(aws --region us-east-1 \
