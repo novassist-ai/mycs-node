@@ -130,15 +130,16 @@ echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
 
 # download mycloudspace api public key
-public_keys=$(aws --region us-east-1 \
-  dynamodb query \
-  --table-name mycs${MYCS_ENV}_AppConfig \
-  --key-condition-expression "#keyName = :key" \
-  --expression-attribute-names '{"#keyName":"key"}' \
-  --expression-attribute-values '{":key":{"S":"appKey"}}' \
-  --no-scan-index-forward)
-id=$(echo $public_keys | jq -r '.Items[0].id.S')
-public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+# public_keys=$(aws --region us-east-1 \
+#   dynamodb query \
+#   --table-name mycs${MYCS_ENV}_AppConfig \
+#   --key-condition-expression "#keyName = :key" \
+#   --expression-attribute-names '{"#keyName":"key"}' \
+#   --expression-attribute-values '{":key":{"S":"appKey"}}' \
+#   --no-scan-index-forward)
+# id=$(echo $public_keys | jq -r '.Items[0].id.S')
+# public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+public_key=""
 echo "$public_key" > .download/mycs-key-$id.pem
 
 echo "Building image for location $LOCATION in resource group $ARM_DEFAULT_RESOURCE_GROUP."
