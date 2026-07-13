@@ -1,0 +1,76 @@
+name: Build node-builder (dev)
+concurrency: node-builder-dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      bastion_image_name:
+        description: Bastion AMI name to bake in (default = latest mycs-bastion_D.*)
+        required: false
+        type: string
+  push:
+    branches: [dev]
+    paths:
+      - "apps/clients/node-builder/**"
+      - "cloud/cookbook/**"
+      - "libs/shared/app/golang/**"
+      - ".dockerignore"
+      - ".github/workflows/build-node-builder-dev.yml"
+  pull_request:
+    branches: [dev]
+    paths:
+      - "apps/clients/node-builder/**"
+      - "cloud/cookbook/**"
+      - "libs/shared/app/golang/**"
+      - ".dockerignore"
+      - ".github/workflows/build-node-builder-dev.yml"
+
+# Smoke build only for now; Part B will push to GHCR as :dev
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve bastion image name
+        id: bastion
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          INPUT_BASTION: ${{ inputs.bastion_image_name }}
+        run: |
+          if [[ -n "${INPUT_BASTION}" ]]; then
+            name="${INPUT_BASTION}"
+          else
+            name=$(bash apps/clients/node-builder/scripts/get-cloud-image.sh ci)
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "Resolved bastion image: ${name}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/clients/node-builder/Dockerfile
+          push: false
+          load: true
+          tags: node-builder:dev
+          build-args: |
+            env=dev
+            version=dev
+            bastion_image_name=${{ steps.bastion.outputs.name }}
+
+      - name: Smoke test
+        run: |
+          docker run --rm node-builder:dev --version
+          docker run --rm node-builder:dev --help
+          docker run --rm node-builder:dev doctor

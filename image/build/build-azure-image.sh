@@ -117,7 +117,7 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
-MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist/mycs-node}
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
 if [[ $IS_DEV_BUILD == yes ]]; then
   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
 elif [[ $MYCS_NODE_VER == latest ]]; then

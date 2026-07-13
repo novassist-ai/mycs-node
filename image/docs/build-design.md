@@ -243,24 +243,28 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 
 | Workflow | Trigger | Branch | Builds |
 |----------|---------|--------|--------|
-| `build-image-dev.yml` | Push to `dev` (paths: `image/build/`, `image/packer/`, `image/scripts/`, `image/www/`) or manual | `dev` | AWS only (Azure/GCP commented out) |
-| `build-image-prod.yml` | Push to `main` or manual | `main` | AWS, Azure, GCP |
+| `build-image-dev.yml` | Push to `dev` (paths under `image/`) or manual | `dev` | AWS only |
+| `build-image-prod.yml` | Push to `main` or manual | `main` | AWS only |
+| `build-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker smoke (`:dev`, bastion `D.*`) |
+| `build-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker smoke (`:latest` / version, bastion semver) |
 
 **Dev workflow:**
 
-1. Creates version `D.YYMMDDHHMMSS`.
-2. Deletes prior dev AMIs matching `D.*`.
+1. Creates version `D.YYMMDDHHMMSS` → AMI name `mycs-bastion_D.…`.
+2. Deletes prior AMIs matching `mycs-bastion_D.*`.
 3. Builds in `us-east-1`, publishes to additional AWS regions.
-4. Triggers dependent build in `novassist/spacenode-cookbook`.
+4. Dispatches `build-node-builder-dev.yml` with that bastion image name.
+
+Local CLI may build a fixed `mycs-bastion_dev`; Actions always uses `D.*`.
 
 **Prod workflow:**
 
-1. Auto-increments semver tag `0.1.N` on `main`.
-2. Sets `IS_DEV_BUILD=no` (GitHub release for mycs-node).
-3. Builds and publishes AWS, Azure, and GCP images.
-4. Triggers dependent builds.
+1. Auto-increments semver tag `0.0.N` on `main`.
+2. Sets `IS_DEV_BUILD=no` and downloads mycs-node from `novassist-ai/mycs-node` releases.
+3. Builds and publishes the AWS AMI.
+4. Dispatches `build-node-builder-prod.yml` with `mycs-bastion_0.0.N`.
 
-Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`, plus cloud-specific credentials for prod Azure/GCP.
+Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`.
 
 ---
 

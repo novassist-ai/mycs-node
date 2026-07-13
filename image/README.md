@@ -161,14 +161,19 @@ source "$OS_OPENRC_FILE"
 
 | Workflow | Trigger | What it builds |
 |----------|---------|----------------|
-| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths: `image/build/`, `image/packer/`, `image/scripts/`, `image/www/`) | AWS AMI `D.YYMMDDHHMMSS`; publishes to multiple regions |
-| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` | Semver tag `0.1.N`; AWS + Azure + GCP with `IS_DEV_BUILD=no` |
+| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-bastion_D.YYMMDDHHMMSS`; multi-region publish; triggers node-builder |
+| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Semver tag `0.0.N`; AWS AMI with `IS_DEV_BUILD=no`; triggers node-builder |
 
-Both workflows trigger downstream builds in related repositories after image publish.
+Local CLI builds may use a fixed `mycs-bastion_dev` name (`DEV_BUILD=dev`). GitHub Actions **dev** builds always use timestamped `D.*` names.
+
+After a successful bastion publish, the workflow dispatches the matching node-builder workflow
+([`build-node-builder-dev.yml`](../.github/workflows/build-node-builder-dev.yml) or
+[`build-node-builder-prod.yml`](../.github/workflows/build-node-builder-prod.yml)) with the
+bastion image name baked into the Docker image.
 
 Manual dispatch: **Actions → Build dev/prod Bastion Images → Run workflow**.
 
-Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`, plus cloud-specific secrets for prod Azure/GCP.
+Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`.
 
 ### Docker build environment
 

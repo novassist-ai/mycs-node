@@ -18,7 +18,7 @@
 #
 variable "provider_type" {
   description = "The provider's cloud type."
-  default = "vbox"
+  default = "vagrant-vbox"
 }
 
 # The bastion VM's instance memory

@@ -4,36 +4,36 @@ concurrency: dev
 on:
   workflow_dispatch:
   push:
-    branches: [ dev ]
+    branches: [dev]
     paths:
-    - 'image/build/**'
-    - 'image/packer/**'
-    - 'image/scripts/**'
-    - 'image/www/**'
+      - "image/build/**"
+      - "image/packer/**"
+      - "image/scripts/**"
+      - "image/www/**"
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
-
-  #
-  # AWS Dev Build & Publish
-  #
-
   create-version:
     runs-on: ubuntu-latest
-    outputs: 
-      version: ${{steps.create-dev-version.outputs.version}}
+    outputs:
+      version: ${{ steps.create-dev-version.outputs.version }}
+      bastion_image_name: ${{ steps.create-dev-version.outputs.bastion_image_name }}
 
     defaults:
       run:
         shell: bash
 
     steps:
-
-    - name: Create dev version
-      id: create-dev-version
-      run: |
-        DEV_BUILD=D.$(date -u '+%y%m%d%H%M%S')
-        echo $DEV_BUILD
-        echo "version=${DEV_BUILD}" >> $GITHUB_OUTPUT
+      - name: Create dev version
+        id: create-dev-version
+        run: |
+          DEV_BUILD=D.$(date -u '+%y%m%d%H%M%S')
+          echo "version=${DEV_BUILD}" >> "$GITHUB_OUTPUT"
+          echo "bastion_image_name=mycs-bastion_${DEV_BUILD}" >> "$GITHUB_OUTPUT"
+          echo "Dev bastion version: ${DEV_BUILD}"
 
   build-aws-image:
     needs: create-version
@@ -44,31 +44,32 @@ jobs:
         shell: bash
         working-directory: image
 
-    # Setup environment for build
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
       DEV_BUILD: ${{ needs.create-version.outputs.version }}
+      IS_DEV_BUILD: yes
+      MYCS_NODE_RELEASE_REPO: appbricks/mycloudspace-node
 
     steps:
-      
-    - name: Checkout
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Run build
-      run: |        
-        build/delete-aws-images.sh 'D.*' all &
-        build/build-aws-image.sh us-east-1 $DEV_BUILD
+      - name: Run build
+        run: |
+          build/delete-aws-images.sh 'D.*' all &
+          build/build-aws-image.sh us-east-1 "$DEV_BUILD"
 
-    - name: Publish image
-      run: |
-        build/publish-aws-image.sh us-east-1 $DEV_BUILD "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
+      - name: Publish image
+        run: |
+          build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
+            "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
-  trigger-dependent-builds:
-    needs: 
-    - build-aws-image
-
+  trigger-node-builder:
+    needs:
+      - create-version
+      - build-aws-image
     runs-on: ubuntu-latest
 
     defaults:
@@ -76,11 +77,13 @@ jobs:
         shell: bash
 
     steps:
-
-    - name: Trigger vpn-server build
-      uses: benc-uk/workflow-dispatch@v1
-      with:
-        repo: appbricks/spacenode-cookbook
-        ref: dev
-        workflow: MyCS SpaceNode Cookbook and SDK (appbricks/spacenode-cookbook:dev) CLI
-        token: ${{ secrets.GH_TOKEN }}
+      - name: Trigger node-builder Docker build
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: build-node-builder-dev.yml
+          ref: ${{ github.ref }}
+          token: ${{ github.token }}
+          inputs: |
+            {
+              "bastion_image_name": "${{ needs.create-version.outputs.bastion_image_name }}"
+            }

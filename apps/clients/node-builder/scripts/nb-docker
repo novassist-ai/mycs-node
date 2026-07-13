@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Host launcher for novassist/node-builder (Docker-hosted nb CLI).
+#
+# Install to PATH as `nb` (Homebrew formula / Windows zip).
+# Override image: NB_IMAGE or NODE_BUILDER_IMAGE
+
+set -euo pipefail
+
+IMAGE="${NB_IMAGE:-${NODE_BUILDER_IMAGE:-novassist/node-builder:latest}}"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: Docker is required but was not found on PATH." >&2
+  echo "Install Docker Desktop: https://docs.docker.com/get-docker/" >&2
+  exit 1
+fi
+
+extra_args=()
+if [[ -t 0 && -t 1 ]]; then
+  extra_args+=(-it)
+fi
+
+exec docker run --privileged --rm \
+  "${extra_args[@]}" \
+  -p 4495:4495 -p 4495:4495/udp \
+  -v "$(pwd):/work" \
+  -w /work \
+  "${IMAGE}" \
+  "$@"

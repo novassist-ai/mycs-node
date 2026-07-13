@@ -13,13 +13,10 @@ locals {
     : "${var.cb_local_state_path}/bastion/cloud-config.dat"
   )
 
-  # split image name into name and version and determine vagrant image src an version
+  # split image name into name and version and determine vagrant box source
   image_name_parts = split("_", var.bastion_image_name)
-  bastion_box_name = "appbricks/${element(local.image_name_parts, 0)}"
-  bastion_box_version = (startswith(element(local.image_name_parts, 1), "D.")
-    ? "0.0.${element(split(".", element(local.image_name_parts, 1)), 1)}"
-    : element(local.image_name_parts, 1)
-  )
+  bastion_box_name = "mycloudspace/${element(local.image_name_parts, 0)}"
+  bastion_box_version = element(local.image_name_parts, 1)
 
   # data disk path
   data_disk_path = (local.is_windows
