@@ -5,7 +5,7 @@ if not defined NB_IMAGE (
   if defined NODE_BUILDER_IMAGE (
     set "NB_IMAGE=%NODE_BUILDER_IMAGE%"
   ) else (
-    set "NB_IMAGE=%REGISTRY_IMAGE%:latest"
+    set "NB_IMAGE=%REGISTRY_IMAGE%:dev"
   )
 )
 where docker >nul 2>&1

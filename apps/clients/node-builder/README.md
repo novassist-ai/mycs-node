@@ -14,9 +14,11 @@ VPN client config and optional traffic-masking tunnels.
 | **End users** | Thin host launcher → Docker image `novassist/node-builder` (cwd → `/work`) |
 | **Developers** | Native Python 3.12+ virtualenv in this folder |
 
-**Packaging (Phase 6):** `Dockerfile`, host launchers (`scripts/nb-docker`, `nb.cmd`, `nb.ps1`),
-`build-docker.sh`, Homebrew formula `node-builder`, CI workflow
-`build-node-builder-dev.yml` / `build-node-builder-prod.yml`. Registry publish is Phase 7.
+**Packaging (Phase 6):** `Dockerfile`, host launchers (`scripts/nb-docker` as `nb` /
+`nb-dev`, Windows `nb*.cmd` / `nb*.ps1`), `build-docker.sh`, Homebrew formula
+`node-builder` (`nb` → GHCR `:latest`, `nb-dev` → `:dev`). CI workflows
+`build-node-builder-dev.yml` / `build-node-builder-prod.yml`. GHCR publish and
+stable formula bumps are Phase 7.
 
 ## Documentation
 

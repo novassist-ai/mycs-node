@@ -133,7 +133,8 @@ time; native runs need it in `build-vars.sh` or the environment.
 | `NB_COOKBOOK_PATH` | Cookbook root |
 | `NB_SKIP_EULA` | Skip EULA (tests/CI only) |
 | `TF_VAR_bastion_image_name` | Bastion AMI/box (`mycs-bastion_*`) |
-| `NB_IMAGE` / `NODE_BUILDER_IMAGE` | Launcher Docker image tag |
+| `NB_IMAGE` / `NODE_BUILDER_IMAGE` | Full image ref (overrides `nb` / `nb-dev` defaults) |
+| `NB_REGISTRY_IMAGE` | Registry repo without tag (default `ghcr.io/novassist-ai/node-builder`) |
 | `EXT_COOKBOOK_PATH` | External cookbooks root |
 
 ---

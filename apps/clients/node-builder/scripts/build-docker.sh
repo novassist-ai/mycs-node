@@ -35,7 +35,8 @@ else
   version=dev
 fi
 
-image="novassist/node-builder:${tag}"
+# Local builds use the same GHCR repository name end users pull via brew.
+image="ghcr.io/novassist-ai/node-builder:${tag}"
 build_opts=()
 if [[ "${clean}" -eq 1 ]]; then
   build_opts+=(--no-cache --pull)

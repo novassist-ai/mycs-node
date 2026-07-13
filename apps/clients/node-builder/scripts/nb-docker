@@ -1,17 +1,34 @@
 #!/usr/bin/env bash
-# Host launcher for novassist/node-builder (Docker-hosted nb CLI).
+# Host launcher for ghcr.io/novassist-ai/node-builder (Docker-hosted nb CLI).
 #
-# Install to PATH as `nb` (Homebrew formula / Windows zip).
+# Installed as:
+#   nb      → ghcr.io/novassist-ai/node-builder:latest  (prod)
+#   nb-dev  → ghcr.io/novassist-ai/node-builder:dev     (dev tip)
+#
 # Override image: NB_IMAGE or NODE_BUILDER_IMAGE
+# Helper: nb pull | nb-dev pull  → docker pull the default image for this channel
 
 set -euo pipefail
 
-IMAGE="${NB_IMAGE:-${NODE_BUILDER_IMAGE:-novassist/node-builder:latest}}"
+REGISTRY_IMAGE="${NB_REGISTRY_IMAGE:-ghcr.io/novassist-ai/node-builder}"
+
+cmd=$(basename "$0")
+case "${cmd}" in
+  nb-dev|nb-dev.*) default_tag=dev ;;
+  *) default_tag=latest ;;
+esac
+
+IMAGE="${NB_IMAGE:-${NODE_BUILDER_IMAGE:-${REGISTRY_IMAGE}:${default_tag}}}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "ERROR: Docker is required but was not found on PATH." >&2
   echo "Install Docker Desktop: https://docs.docker.com/get-docker/" >&2
   exit 1
+fi
+
+if [[ "${1:-}" == "pull" ]]; then
+  echo "Pulling ${IMAGE}..."
+  exec docker pull "${IMAGE}"
 fi
 
 extra_args=()

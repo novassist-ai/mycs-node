@@ -1,11 +1,11 @@
-# node-builder CLI image (novassist/node-builder)
+# node-builder CLI image (ghcr.io/novassist-ai/node-builder)
 #
 # Build from repository root:
 #   docker build -f apps/clients/node-builder/Dockerfile \
 #     --build-arg env=dev \
 #     --build-arg version=dev \
 #     --build-arg bastion_image_name=mycs-bastion_dev \
-#     -t novassist/node-builder:dev .
+#     -t ghcr.io/novassist-ai/node-builder:dev .
 
 FROM python:3.12-slim-bookworm
 

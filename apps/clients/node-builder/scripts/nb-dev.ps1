@@ -7,8 +7,7 @@ param(
 $RegistryImage = if ($env:NB_REGISTRY_IMAGE) { $env:NB_REGISTRY_IMAGE }
                  else { "ghcr.io/novassist-ai/node-builder" }
 
-# Prod launcher (nb.ps1). Use nb-dev.ps1 for the :dev channel.
-$DefaultTag = "latest"
+$DefaultTag = "dev"
 
 $Image = if ($env:NB_IMAGE) { $env:NB_IMAGE }
          elseif ($env:NODE_BUILDER_IMAGE) { $env:NODE_BUILDER_IMAGE }
