@@ -1,5 +1,5 @@
-name: Build prod Bastion Images
-concurrency: prod
+name: Build Bastion Images (prod)
+concurrency: build-image-prod
 
 on:
   workflow_dispatch:

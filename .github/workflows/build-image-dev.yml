@@ -1,5 +1,5 @@
-name: Build dev Bastion Images
-concurrency: dev
+name: Build Bastion Images (dev)
+concurrency: build-image-dev
 
 on:
   workflow_dispatch:

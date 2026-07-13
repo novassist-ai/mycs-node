@@ -19,8 +19,6 @@ on:
       - "apps/clients/node-builder/**"
       - "cloud/cookbook/**"
       - "libs/shared/app/golang/**"
-      - ".dockerignore"
-      - ".github/workflows/build-node-builder-prod.yml"
 
 # Smoke build only for now; Part B will push to GHCR as :latest and :version
 permissions:
