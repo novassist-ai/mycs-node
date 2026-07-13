@@ -1,4 +1,4 @@
-# mycs-node
+# MyCloudSpace Node
 
 MyCS Bastion Node and Cloud Network Automation.
 
