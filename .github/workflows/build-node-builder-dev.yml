@@ -96,6 +96,8 @@ jobs:
           push: ${{ steps.meta.outputs.push }}
           load: ${{ steps.meta.outputs.load }}
           platforms: ${{ steps.meta.outputs.platforms }}
+          provenance: false
+          sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             env=dev
