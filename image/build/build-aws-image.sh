@@ -113,8 +113,18 @@ echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 #   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 # fi
 
-# TODO: remove this
-touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
+# TODO: remove this — stub release zip until real mycs-node artifacts are published
+(
+  stub_dir=$(mktemp -d)
+  trap 'rm -rf "$stub_dir"' EXIT
+  cd "$stub_dir"
+  for f in mycs-node mycs-daemon headscale tailscaled tailscale version; do
+    : >"$f"
+  done
+  chmod +x mycs-node mycs-daemon headscale tailscaled tailscale
+  zip -q "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip" \
+    mycs-node mycs-daemon headscale tailscaled tailscale version
+)
 
 # download mycloudspace api public key
 # public_keys=$(aws --region us-east-1 \
@@ -140,12 +150,23 @@ base_amis=$(curl -sL https://cloud-images.ubuntu.com/locator/releasesTable \
     | .string)"')
 
 # build images for each region
+pids=()
+status=0
 for r in $(echo "$regions"); do
   echo "Building AMI for region $r."
-  aws::build_ami "$IMAGE_NAME" \
-    "$r" "$base_amis" "$BUILD_DIR/packer/build-aws.pkr.hcl" 2>&1 \
-    | tee $LOG_DIR/build-aws-$r.log &
+  (
+    aws::build_ami "$IMAGE_NAME" \
+      "$r" "$base_amis" "$BUILD_DIR/packer/build-aws.pkr.hcl" 2>&1 \
+      | tee "$LOG_DIR/build-aws-$r.log"
+    # Prefer packer's status over tee's (bare `wait` returns 0 even on child failure).
+    exit "${PIPESTATUS[0]}"
+  ) &
+  pids+=($!)
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

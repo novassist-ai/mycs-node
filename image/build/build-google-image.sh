@@ -119,8 +119,18 @@ echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 #   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
 # fi
 
-# TODO: remove this
-touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
+# TODO: remove this — stub release zip until real mycs-node artifacts are published
+(
+  stub_dir=$(mktemp -d)
+  trap 'rm -rf "$stub_dir"' EXIT
+  cd "$stub_dir"
+  for f in mycs-node mycs-daemon headscale tailscaled tailscale version; do
+    : >"$f"
+  done
+  chmod +x mycs-node mycs-daemon headscale tailscaled tailscale
+  zip -q "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip" \
+    mycs-node mycs-daemon headscale tailscaled tailscale version
+)
 
 # download mycloudspace api public key
 # public_keys=$(aws --region us-east-1 \
