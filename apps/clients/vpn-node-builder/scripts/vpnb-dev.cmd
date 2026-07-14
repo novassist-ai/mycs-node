@@ -19,5 +19,21 @@ if /I "%~1"=="pull" (
   docker pull %VPNB_IMAGE%
   exit /b %ERRORLEVEL%
 )
+if /I "%~1"=="update" (
+  echo Updating %VPNB_IMAGE%...
+  docker image inspect %VPNB_IMAGE% >nul 2>&1
+  if not errorlevel 1 (
+    docker rmi -f %VPNB_IMAGE% >nul 2>&1
+  )
+  echo Pulling %VPNB_IMAGE%...
+  docker pull %VPNB_IMAGE%
+  exit /b %ERRORLEVEL%
+)
+docker image inspect %VPNB_IMAGE% >nul 2>&1
+if errorlevel 1 (
+  echo Image '%VPNB_IMAGE%' not found locally; pulling...
+  docker pull %VPNB_IMAGE%
+  if errorlevel 1 exit /b %ERRORLEVEL%
+)
 docker run --privileged --rm -it -p 4495:4495 -p 4495:4495/udp -v "%CD%:/work" -w /work %VPNB_IMAGE% %*
 endlocal

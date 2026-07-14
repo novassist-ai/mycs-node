@@ -18,11 +18,32 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+function Ensure-Image {
+    & docker image inspect $Image 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return }
+    Write-Host "Image '${Image}' not found locally; pulling..."
+    & docker pull $Image
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 if ($NbArgs.Count -ge 1 -and $NbArgs[0] -eq "pull") {
     Write-Host "Pulling ${Image}..."
     & docker pull $Image
     exit $LASTEXITCODE
 }
+
+if ($NbArgs.Count -ge 1 -and $NbArgs[0] -eq "update") {
+    Write-Host "Updating ${Image}..."
+    & docker image inspect $Image 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        & docker rmi -f $Image | Out-Null
+    }
+    Write-Host "Pulling ${Image}..."
+    & docker pull $Image
+    exit $LASTEXITCODE
+}
+
+Ensure-Image
 
 $dockerArgs = @(
     "run", "--privileged", "--rm", "-it",

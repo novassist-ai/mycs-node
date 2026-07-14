@@ -6,7 +6,9 @@
 #   vpnb-dev  → ghcr.io/novassist-ai/vpn-node-builder:dev     (dev tip)
 #
 # Override image: VPNB_IMAGE or VPN_NODE_BUILDER_IMAGE
-# Helper: vpnb pull | vpnb-dev pull  → docker pull the default image for this channel
+# Host helpers (not forwarded into the container):
+#   vpnb pull   | vpnb-dev pull   → docker pull (refresh tag)
+#   vpnb update | vpnb-dev update → delete local image, then pull fresh
 
 set -euo pipefail
 
@@ -26,10 +28,30 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "${1:-}" == "pull" ]]; then
-  echo "Pulling ${IMAGE}..."
-  exec docker pull "${IMAGE}"
-fi
+ensure_image() {
+  if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Image '${IMAGE}' not found locally; pulling..."
+  docker pull "${IMAGE}"
+}
+
+case "${1:-}" in
+  pull)
+    echo "Pulling ${IMAGE}..."
+    exec docker pull "${IMAGE}"
+    ;;
+  update)
+    echo "Updating ${IMAGE}..."
+    if docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+      docker rmi -f "${IMAGE}" >/dev/null
+    fi
+    echo "Pulling ${IMAGE}..."
+    exec docker pull "${IMAGE}"
+    ;;
+esac
+
+ensure_image
 
 extra_args=()
 if [[ -t 0 && -t 1 ]]; then
@@ -37,7 +59,7 @@ if [[ -t 0 && -t 1 ]]; then
 fi
 
 exec docker run --privileged --rm \
-  "${extra_args[@]}" \
+  ${extra_args[@]+"${extra_args[@]}"} \
   -p 4495:4495 -p 4495:4495/udp \
   -v "$(pwd):/work" \
   -w /work \

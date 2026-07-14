@@ -32,12 +32,18 @@ Tap: [`novassist-ai/homebrew-tap`](https://github.com/novassist-ai/homebrew-tap)
 brew tap novassist-ai/tap
 brew install --HEAD vpn-node-builder
 
-vpnb pull       # prod :latest
-vpnb --help
-
-vpnb-dev pull   # floating :dev
-vpnb-dev --help
+vpnb-dev --help          # auto-pulls :dev if missing locally
+vpnb-dev update          # force re-download :dev
+vpnb --help              # prod :latest (once published)
 ```
+
+Host launcher helpers (not Typer commands):
+
+| Command | Behavior |
+|---------|----------|
+| _(none)_ | Auto-pulls the channel image if it is not present locally |
+| `pull` | `docker pull` for the channel image |
+| `update` | Deletes the local image, then pulls a fresh copy |
 
 The formula installs the launcher as **`vpnb`** and a symlink **`vpnb-dev`**. It does
 **not** install Python, Terraform, or cloud CLIs on the host — those run inside
@@ -53,8 +59,7 @@ From a release artifact (Phase 7 publishes the zip):
 1. Extract `vpnb.cmd` / `vpnb.ps1` (prod) and `vpnb-dev.cmd` / `vpnb-dev.ps1` (dev) onto
    your `PATH`.
 2. Ensure Docker Desktop is running.
-3. `vpnb pull` or `vpnb-dev pull`
-4. Run `vpnb --help` or `vpnb-dev --help`
+3. Run `vpnb --help` or `vpnb-dev --help` (auto-pulls if needed); use `update` to force refresh.
 
 Scripts live in `apps/clients/vpn-node-builder/scripts/` in the repository until
 release packaging is wired.
