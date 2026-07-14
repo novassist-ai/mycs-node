@@ -122,8 +122,6 @@ else
     --repo "$MYCS_NODE_RELEASE_REPO" \
     --dir "$BUILD_DIR/.download"
 fi
-echo "done"
-exit 0
 
 # download mycloudspace api public key
 # public_keys=$(aws --region us-east-1 \
