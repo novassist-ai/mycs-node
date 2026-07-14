@@ -25,6 +25,22 @@ IMAGE_NAME="mycs-node-image_$2"
 
 set -euo pipefail
 
+# Returns 0 if the region is enabled for this account (or does not require opt-in).
+function aws::region_enabled() {
+  local region=$1
+  local query_region=${2:-${AWS_DEFAULT_REGION:-us-east-1}}
+  local status
+
+  status=$(aws ec2 describe-regions \
+    --all-regions \
+    --region "$query_region" \
+    --filters "Name=region-name,Values=$region" \
+    --query 'Regions[0].OptInStatus' \
+    --output text 2>/dev/null || true)
+
+  [[ "$status" == "opt-in-not-required" || "$status" == "opted-in" ]]
+}
+
 function aws::delete_image() {
 
   local region=$1
@@ -125,10 +141,15 @@ regions=${3:-$(aws ec2 describe-regions --output text | cut -f4)}
 pids=()
 status=0
 for r in $(echo "$regions"); do
-  if [[ "$r" != "$SOURCE_REGION" ]]; then
-    aws::publish_ami "$r" "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME" &
-    pids+=($!)
+  if [[ "$r" == "$SOURCE_REGION" ]]; then
+    continue
   fi
+  if ! aws::region_enabled "$r" "$SOURCE_REGION"; then
+    echo "WARNING: Skipping publish to region '$r' — not enabled for this AWS account."
+    continue
+  fi
+  aws::publish_ami "$r" "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME" &
+  pids+=($!)
 done
 
 for pid in "${pids[@]}"; do
