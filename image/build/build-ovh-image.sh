@@ -133,8 +133,8 @@ touch "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip"
 #   --no-scan-index-forward)
 # id=$(echo "$public_keys" | jq -r '.Items[0].id.S')
 # public_key=$(echo "$public_keys" | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-public_key=""
-echo "$public_key" > "$BUILD_DIR/.download/mycs-key-${id}.pem"
+# echo "$public_key" > "$BUILD_DIR/.download/mycs-key-${id}.pem"
+echo "" > "$BUILD_DIR/.download/mycs-key-00000.pem"
 
 echo "Building OVHcloud image '${IMAGE_NAME}' in region '${BUILD_REGION}'."
 set +e

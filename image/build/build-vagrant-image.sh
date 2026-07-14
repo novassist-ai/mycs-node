@@ -104,8 +104,8 @@ touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
 #   --no-scan-index-forward)
 # id=$(echo $public_keys | jq -r '.Items[0].id.S')
 # public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-public_key=""
-echo "$public_key" > .download/mycs-key-$id.pem
+# echo "$public_key" > .download/mycs-key-$id.pem
+echo "" > .download/mycs-key-00000.pem
 
 vagrant::build_box "$BOX_NAME" \
   "$BOX_VERSION" \
