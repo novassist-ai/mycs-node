@@ -65,7 +65,7 @@ jobs:
           build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
             "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
-  trigger-node-builder:
+  trigger-vpn-node-builder:
     needs:
       - create-version
       - build-aws-image
@@ -76,10 +76,10 @@ jobs:
         shell: bash
 
     steps:
-      - name: Trigger node-builder Docker build
+      - name: Trigger vpn-node-builder Docker build
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: build-node-builder-dev.yml
+          workflow: build-vpn-node-builder-dev.yml
           ref: ${{ github.ref }}
           token: ${{ github.token }}
           inputs: |

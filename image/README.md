@@ -161,14 +161,14 @@ source "$OS_OPENRC_FILE"
 
 | Workflow | Trigger | What it builds |
 |----------|---------|----------------|
-| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-node-image_D.YYMMDDHHMMSS`; multi-region publish; triggers node-builder |
-| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Git tag `mycs-node-image_0.0.N`; AWS AMI with same name; `IS_DEV_BUILD=no`; triggers node-builder |
+| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-node-image_D.YYMMDDHHMMSS`; multi-region publish; triggers vpn-node-builder |
+| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Git tag `mycs-node-image_0.0.N`; AWS AMI with same name; `IS_DEV_BUILD=no`; triggers vpn-node-builder |
 
 Local CLI builds may use a fixed `mycs-node-image_dev` name (`DEV_BUILD=dev`). GitHub Actions **dev** builds always use timestamped `D.*` names.
 
-After a successful bastion publish, the workflow dispatches the matching node-builder workflow
-([`build-node-builder-dev.yml`](../.github/workflows/build-node-builder-dev.yml) or
-[`build-node-builder-prod.yml`](../.github/workflows/build-node-builder-prod.yml)) with the
+After a successful bastion publish, the workflow dispatches the matching vpn-node-builder workflow
+([`build-vpn-node-builder-dev.yml`](../.github/workflows/build-vpn-node-builder-dev.yml) or
+[`build-vpn-node-builder-prod.yml`](../.github/workflows/build-vpn-node-builder-prod.yml)) with the
 bastion image name baked into the Docker image.
 
 Manual dispatch: **Actions → Build dev/prod Bastion Images → Run workflow**.

@@ -96,7 +96,7 @@ jobs:
         run: |
           build/publish-aws-image.sh us-east-1 "$VERSION"
 
-  trigger-node-builder:
+  trigger-vpn-node-builder:
     needs:
       - create-release-tag
       - build-aws-image
@@ -107,10 +107,10 @@ jobs:
         shell: bash
 
     steps:
-      - name: Trigger node-builder Docker build
+      - name: Trigger vpn-node-builder Docker build
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: build-node-builder-prod.yml
+          workflow: build-vpn-node-builder-prod.yml
           ref: ${{ github.ref }}
           token: ${{ github.token }}
           inputs: |

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Host launcher for ghcr.io/novassist-ai/vpn-node-builder (Docker-hosted vpnb CLI).
+#
+# Installed as:
+#   vpnb      → ghcr.io/novassist-ai/vpn-node-builder:latest  (prod)
+#   vpnb-dev  → ghcr.io/novassist-ai/vpn-node-builder:dev     (dev tip)
+#
+# Override image: VPNB_IMAGE or VPN_NODE_BUILDER_IMAGE
+# Helper: vpnb pull | vpnb-dev pull  → docker pull the default image for this channel
+
+set -euo pipefail
+
+REGISTRY_IMAGE="${VPNB_REGISTRY_IMAGE:-ghcr.io/novassist-ai/vpn-node-builder}"
+
+cmd=$(basename "$0")
+case "${cmd}" in
+  vpnb-dev|vpnb-dev.*) default_tag=dev ;;
+  *) default_tag=latest ;;
+esac
+
+IMAGE="${VPNB_IMAGE:-${VPN_NODE_BUILDER_IMAGE:-${REGISTRY_IMAGE}:${default_tag}}}"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: Docker is required but was not found on PATH." >&2
+  echo "Install Docker Desktop: https://docs.docker.com/get-docker/" >&2
+  exit 1
+fi
+
+if [[ "${1:-}" == "pull" ]]; then
+  echo "Pulling ${IMAGE}..."
+  exec docker pull "${IMAGE}"
+fi
+
+extra_args=()
+if [[ -t 0 && -t 1 ]]; then
+  extra_args+=(-it)
+fi
+
+exec docker run --privileged --rm \
+  "${extra_args[@]}" \
+  -p 4495:4495 -p 4495:4495/udp \
+  -v "$(pwd):/work" \
+  -w /work \
+  "${IMAGE}" \
+  "$@"
