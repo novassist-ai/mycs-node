@@ -33,7 +33,7 @@ def build_backend_config(
         raise NodeBuilderError(f'Region is required for backend "{backend}".')
 
     if backend == "s3":
-        bucket = f"{name}-vs-tfstate-{region}"
+        bucket = f"{name}-nb-tfstate-{region}"
         return BackendConfig(
             backend=backend,
             args=(
@@ -53,7 +53,7 @@ def build_backend_config(
             ),
         )
     if backend == "gcs":
-        bucket = f"{name}-vs-tfstate-{region}"
+        bucket = f"{name}-nb-tfstate-{region}"
         return BackendConfig(
             backend=backend,
             args=(
@@ -86,7 +86,7 @@ def ensure_backend_resources(
     name = (environ.get("TF_VAR_name") or "").strip()
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
-        bucket = f"{name}-vs-tfstate-{region}"
+        bucket = f"{name}-nb-tfstate-{region}"
         listed = run_cmd(["aws", "s3", "ls"], environ=dict(environ), check=False)
         if bucket not in listed.stdout:
             run_cmd(
@@ -177,7 +177,7 @@ def ensure_backend_resources(
 
     if backend == "gcs":
         ensure_cloud_cli("google", session, environ)
-        bucket = f"{name}-vs-tfstate-{region}"
+        bucket = f"{name}-nb-tfstate-{region}"
         listed = run_cmd(["gsutil", "ls"], environ=dict(environ), check=False)
         existing = {
             part
