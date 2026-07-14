@@ -105,11 +105,11 @@ Sandbox public-cloud recipes require `var.bastion_image_name` (no default).
 
 | Source | Value |
 |--------|--------|
-| Docker image build (dev) | `mycs-bastion_dev` baked via `ENV TF_VAR_bastion_image_name` |
-| Docker image build (prod) | Latest `mycs-bastion_X.Y.Z` from `scripts/get-cloud-image.sh prod` |
+| Docker image build (dev) | `mycs-node-image_dev` baked via `ENV TF_VAR_bastion_image_name` |
+| Docker image build (prod) | Latest `mycs-node-image_X.Y.Z` from `scripts/get-cloud-image.sh prod` |
 | Native dev | Set in `build-vars.sh` or export before `nb deploy-node` |
 
-Naming uses `mycs-bastion_*` only — no `appbricks-*` AMI lookups.
+Naming uses `mycs-node-image_*` only — no `appbricks-*` AMI lookups.
 
-`vagrant-vbox` maps `mycs-bastion_<version>` → Vagrant box
-`mycloudspace/mycs-bastion` at version `<version>` (e.g. `dev`, `1.2.3`).
+`vagrant-vbox` maps `mycs-node-image_<version>` → Vagrant box
+`mycloudspace/mycs-node-image` at version `<version>` (e.g. `dev`, `1.2.3`).

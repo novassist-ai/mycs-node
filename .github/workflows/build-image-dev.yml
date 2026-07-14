@@ -32,8 +32,8 @@ jobs:
         run: |
           DEV_BUILD=D.$(date -u '+%y%m%d%H%M%S')
           echo "version=${DEV_BUILD}" >> "$GITHUB_OUTPUT"
-          echo "bastion_image_name=mycs-bastion_${DEV_BUILD}" >> "$GITHUB_OUTPUT"
-          echo "Dev bastion version: ${DEV_BUILD}"
+          echo "bastion_image_name=mycs-node-image_${DEV_BUILD}" >> "$GITHUB_OUTPUT"
+          echo "Dev bastion version: ${DEV_BUILD} → mycs-node-image_${DEV_BUILD}"
 
   build-aws-image:
     needs: create-version

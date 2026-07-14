@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.release-tag.outputs.version }}
+      release_tag: ${{ steps.release-tag.outputs.release_tag }}
       bastion_image_name: ${{ steps.release-tag.outputs.bastion_image_name }}
 
     defaults:
@@ -27,7 +28,9 @@ jobs:
         shell: bash
 
     env:
+      # Semver series; git tags and AMIs use prefix mycs-node-image_
       VERSION: "0.0"
+      IMAGE_PREFIX: mycs-node-image
 
     steps:
       - name: Checkout
@@ -44,21 +47,24 @@ jobs:
           last_tag=$(git for-each-ref \
             --sort=-creatordate \
             --format '%(refname)' refs/tags \
-            | grep "refs/tags/${VERSION}" \
+            | grep "refs/tags/${IMAGE_PREFIX}_${VERSION}" \
             | head -1)
           set -e
 
           build_number=$(basename "$last_tag" | cut -d '.' -f3)
           [[ -n $build_number ]] || build_number=-1
-          release_tag=${VERSION}.$((build_number+1))
+          version=${VERSION}.$((build_number+1))
+          release_tag=${IMAGE_PREFIX}_${version}
+          bastion_image_name=${IMAGE_PREFIX}_${version}
           last_commit_msg=$(git log -1 --pretty=%B)
 
           echo "Creating release tag ${release_tag}..."
           git tag -a "${release_tag}" -m "$last_commit_msg"
           git push --follow-tags
 
-          echo "version=${release_tag}" >> "$GITHUB_OUTPUT"
-          echo "bastion_image_name=mycs-bastion_${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "bastion_image_name=${bastion_image_name}" >> "$GITHUB_OUTPUT"
 
   build-aws-image:
     needs: create-release-tag
@@ -81,7 +87,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.create-release-tag.outputs.version }}
+          ref: ${{ needs.create-release-tag.outputs.release_tag }}
 
       - name: Run build
         run: |

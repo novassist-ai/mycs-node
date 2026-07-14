@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       bastion_image_name:
-        description: Bastion AMI name to bake in (default = latest mycs-bastion_D.*)
+        description: Bastion AMI name to bake in (default = latest mycs-node-image_D.*)
         required: false
         type: string
   push:

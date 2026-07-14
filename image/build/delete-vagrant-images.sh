@@ -42,21 +42,21 @@ else
 fi
 
 # image name and version
-BOX_NAME="mycs-bastion"
+BOX_NAME="mycs-node-image"
 BOX_VERSION=${1:-0.0.0}
 [[ $BOX_VERSION != D.* ]] || \
   BOX_VERSION=0.0.${BOX_VERSION#D.*}
 
 set -euo pipefail
 
-existing_vers=$(curl -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-bastion" \
+existing_vers=$(curl -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-node-image" \
   --request GET \
   --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
   | jq -r --arg v "$BOX_VERSION" '.versions[] | select(.version|test($v)) | .version')
 
 for box_version in $existing_vers; do
   echo "Deleting vagrant box '$BOX_NAME' version '$box_version'" 
-  curl -f -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-bastion/version/${box_version}" \
+  curl -f -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-node-image/version/${box_version}" \
     --request DELETE \
     --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
     >/dev/null 2>&1

@@ -59,7 +59,7 @@ export TF_VAR_vpn_users="user1|password1,user2|password2"
 # Bastion appliance image (public cloud sandbox recipes).
 # Docker image `novassist/node-builder` sets TF_VAR_bastion_image_name at build time.
 # Override here for native development, e.g.:
-#export TF_VAR_bastion_image_name=mycs-bastion_dev
+#export TF_VAR_bastion_image_name=mycs-node-image_dev
 """
 
 

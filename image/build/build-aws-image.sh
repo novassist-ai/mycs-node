@@ -39,7 +39,7 @@ fi
 
 # Append version to AMI name
 IMAGE_VERSION=${2:-dev}
-IMAGE_NAME="mycs-bastion_${IMAGE_VERSION}"
+IMAGE_NAME="mycs-node-image_${IMAGE_VERSION}"
 
 set -euo pipefail
 

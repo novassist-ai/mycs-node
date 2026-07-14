@@ -16,7 +16,7 @@ ovh::validate_auth
 if [[ -n "${1:-}" ]]; then
   IMAGE_NAME=$(ovh::image_name_for_version "$1")
 else
-  IMAGE_NAME="mycs-bastion"
+  IMAGE_NAME="mycs-node-image"
 fi
 
 REGION="${2:-all}"

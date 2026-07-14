@@ -141,7 +141,7 @@ for s in $(echo -e "$snapshot_list"); do
   id=$(echo $s | awk -F'|' '{print $1}')
   snapshot_name=$(echo $s | awk -F'|' '{print $2}')
   version=${snapshot_name%_*} && version=${version#*_} && version=$(echo "$version" | tr '_' '.')
-  publish_vhd_name="mycs-bastion_${version}.vhd"
+  publish_vhd_name="mycs-node-image_${version}.vhd"
 
   echo -e "\nDeleting image snapshot '$snapshot_name'."
   az snapshot delete --ids $id

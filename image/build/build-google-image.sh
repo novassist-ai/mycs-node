@@ -42,7 +42,7 @@ fi
 
 # Append version to image name
 IMAGE_VERSION=${1:-dev}
-IMAGE_NAME="mycs-bastion"
+IMAGE_NAME="mycs-node-image"
 PUBLISH_IMAGE_NAME="${IMAGE_NAME}_${IMAGE_VERSION}"
 IMAGE_NAME="${IMAGE_NAME}-$(echo "${IMAGE_VERSION}" | tr '.' '-' | tr '[:upper:]' '[:lower:]')"
 
@@ -101,7 +101,7 @@ function google::build_image() {
     "gs://${publish_bucket}/logs/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" >/dev/null 2>&1
   set -e
   gsutil mv \
-    "gs://${publish_bucket}/mycs-bastion/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" \
+    "gs://${publish_bucket}/mycs-node-image/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log" \
     "gs://${publish_bucket}/logs/${PUBLISH_IMAGE_NAME}.tar.gz.exporter.log"
 }
 

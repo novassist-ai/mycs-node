@@ -66,7 +66,7 @@ build {
   }
 
   post-processor "vagrant-cloud" {
-    box_tag = "mycloudspace/mycs-bastion"
+    box_tag = "mycloudspace/mycs-node-image"
     version = var.version
   }
 }

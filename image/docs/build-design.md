@@ -229,11 +229,11 @@ Dev builds require **AWS credentials** even when building GCP, Azure, or OVH ima
 
 | Cloud | Image name pattern | Notes |
 |-------|-------------------|-------|
-| AWS | `mycs-bastion_{version}` | ARM64 AMI |
-| GCP | `mycs-bastion-{version}` | Dots → hyphens; exported `.tar.gz` to GCS |
-| Azure | `mycs-bastion-{env}_{location}` | Snapshot: `novassistbastion_{version}_{location}` |
-| OVH | `mycs-bastion_{version}` | Private Glance image; QCOW2 export for publish |
-| Vagrant | `mycloudspace/mycs-bastion` | VirtualBox box on Vagrant Cloud |
+| AWS | `mycs-node-image_{version}` | ARM64 AMI |
+| GCP | `mycs-node-image-{version}` | Dots → hyphens; exported `.tar.gz` to GCS under `mycs-node-image/` |
+| Azure | `mycs-node-image-{env}_{location}` | Snapshot: `mycsnodeimage_{version}` |
+| OVH | `mycs-node-image_{version}` | Private Glance image; QCOW2 export for publish |
+| Vagrant | `mycloudspace/mycs-node-image` | VirtualBox box on Vagrant Cloud |
 
 Log files: `build-{cloud}-{region}.log` in the directory where the build script is invoked.
 
@@ -250,19 +250,19 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 
 **Dev workflow:**
 
-1. Creates version `D.YYMMDDHHMMSS` → AMI name `mycs-bastion_D.…`.
-2. Deletes prior AMIs matching `mycs-bastion_D.*`.
+1. Creates version `D.YYMMDDHHMMSS` → AMI name `mycs-node-image_D.…`.
+2. Deletes prior AMIs matching `mycs-node-image_D.*`.
 3. Builds in `us-east-1`, publishes to additional AWS regions.
 4. Dispatches `build-node-builder-dev.yml` with that bastion image name.
 
-Local CLI may build a fixed `mycs-bastion_dev`; Actions always uses `D.*`.
+Local CLI may build a fixed `mycs-node-image_dev`; Actions always uses `D.*`.
 
 **Prod workflow:**
 
-1. Auto-increments semver tag `0.0.N` on `main`.
+1. Auto-increments git tag `mycs-node-image_0.0.N` on `main`.
 2. Sets `IS_DEV_BUILD=no` and downloads mycs-node from `novassist-ai/mycs-node` releases.
-3. Builds and publishes the AWS AMI.
-4. Dispatches `build-node-builder-prod.yml` with `mycs-bastion_0.0.N`.
+3. Builds and publishes the AWS AMI `mycs-node-image_0.0.N`.
+4. Dispatches `build-node-builder-prod.yml` with that image name.
 
 Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`.
 

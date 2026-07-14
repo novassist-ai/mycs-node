@@ -39,7 +39,7 @@ if [[ -z $2 ]]; then
   echo -e "ERROR! Only tagged image builds can be published"
   exit 1
 fi
-PUBLISH_VHD_NAME="mycs-bastion_${2}.vhd"
+PUBLISH_VHD_NAME="mycs-node-image_${2}.vhd"
 PUBLISH_SNAPSHOT_NAME="${IMAGE_SNAPSHOT_PREFIX}_$(echo $2 | sed 's/\./_/g')_${1}" 
 
 echo "Publishing image snapshot '$PUBLISH_SNAPSHOT_NAME' to unmanaged VHD image '$PUBLISH_VHD_NAME'."

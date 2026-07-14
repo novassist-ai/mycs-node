@@ -43,7 +43,7 @@ function ovh::validate_auth() {
 
 function ovh::image_name_for_version() {
   local version=$1
-  echo "mycs-bastion_${version}"
+  echo "mycs-node-image_${version}"
 }
 
 function ovh::resolve_openstack_ids() {

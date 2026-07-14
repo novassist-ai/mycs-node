@@ -16,7 +16,7 @@ def test_get_cloud_image_dev() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout.strip() == "mycs-bastion_dev"
+    assert result.stdout.strip() == "mycs-node-image_dev"
 
 
 def test_get_cloud_image_usage() -> None:

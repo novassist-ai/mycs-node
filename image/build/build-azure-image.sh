@@ -54,8 +54,8 @@ fi
 
 # Append version to image name
 IMAGE_VERSION=${1:-dev}
-IMAGE_NAME="mycs-bastion-${MYCS_ENV}"
-IMAGE_DISK_SNAPSHOT_NAME="novassistbastion"
+IMAGE_NAME="mycs-node-image-${MYCS_ENV}"
+IMAGE_DISK_SNAPSHOT_NAME="mycsnodeimage"
 IMAGE_DISK_SNAPSHOT_NAME="${IMAGE_DISK_SNAPSHOT_NAME}_$(echo ${IMAGE_VERSION} | sed 's/\./_/g')" 
 
 ARM_DEFAULT_RESOURCE_GROUP=${ARM_DEFAULT_RESOURCE_GROUP:-external}

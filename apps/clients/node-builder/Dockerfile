@@ -4,14 +4,14 @@
 #   docker build -f apps/clients/node-builder/Dockerfile \
 #     --build-arg env=dev \
 #     --build-arg version=dev \
-#     --build-arg bastion_image_name=mycs-bastion_dev \
+#     --build-arg bastion_image_name=mycs-node-image_dev \
 #     -t ghcr.io/novassist-ai/node-builder:dev .
 
 FROM python:3.12-slim-bookworm
 
 ARG env=dev
 ARG version=dev
-ARG bastion_image_name=mycs-bastion_dev
+ARG bastion_image_name=mycs-node-image_dev
 
 ENV env=${env}
 ENV version=${version}

@@ -48,7 +48,7 @@ source "googlecompute" "bastion" {
   zone               = var.gcp_zone
   source_image_family = var.source_image_family
   ssh_username       = "ubuntu"
-  image_family       = "mycs-bastion"
+  image_family       = "mycs-node-image"
   image_name         = var.image_name
   image_description  = "MyCS bastion instance base image"
   disk_size          = 10
@@ -86,7 +86,7 @@ build {
   }
 
   post-processor "googlecompute-export" {
-    paths              = ["gs://${var.publish_bucket}/mycs-bastion/${var.publish_image_name}.tar.gz"]
+    paths              = ["gs://${var.publish_bucket}/mycs-node-image/${var.publish_image_name}.tar.gz"]
     keep_input_artifact = true
   }
 }
