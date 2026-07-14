@@ -30,6 +30,8 @@ REGION="${2:-${GOOGLE_REGION-all}}"
 
 set -euo pipefail
 
+pids=()
+
 function google::delete_shared_image_objects() {
   
   local image_object_name=$1
@@ -64,6 +66,7 @@ function google::delete_shared_images() {
   for r in $(echo "$regions"); do
     publish_bucket=${GS_PUBLISH_BUCKET_PREFIX:-mycsimages}_${r}
     google::delete_shared_image_objects "$image_object_name" "$publish_bucket" &
+    pids+=($!)
   done
 }
 
@@ -76,6 +79,7 @@ function google::delete_images() {
   for image in $image_list; do
     echo -e "\nDeleting image with name '$image'..."
     gcloud compute images delete -q "$image" &
+    pids+=($!)
 
     google::delete_shared_images "$image" "$region"
   done
@@ -90,5 +94,10 @@ gcloud config set project --quiet $GOOGLE_PROJECT
 
 google::delete_images "$IMAGE_NAME" "$REGION"
 
-# Wait for child processes to finish
-wait
+status=0
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

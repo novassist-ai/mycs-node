@@ -70,9 +70,16 @@ if [[ -z $REGION || $REGION == all ]]; then
 else
   regions=$REGION
 fi
+pids=()
+status=0
 for r in $(echo "$regions"); do
   aws::delete_images "$r" "$IMAGE_NAME" &
+  pids+=($!)
 done
 
-# Wait for child processes to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

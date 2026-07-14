@@ -195,16 +195,24 @@ skip_regions='
   westus2stage:
   westusstage:'
 
+pids=()
+status=0
 for l in $(echo "$locations"); do
-  (echo "$skip_regions" | grep "  $l:" 2>&1 >/dev/null) || \
+  if ! echo "$skip_regions" | grep "  $l:" >/dev/null 2>&1; then
     azure::publish_image_snapshot "$l" "$sas_url" &
+    pids+=($!)
+  fi
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
 
 set +e
 az snapshot revoke-access \
   --resource-group "$ARM_DEFAULT_RESOURCE_GROUP" \
   --name "$PUBLISH_SNAPSHOT_NAME" 2>&1 >/dev/null
 set -e
+exit "$status"

@@ -71,11 +71,18 @@ if [[ -z $REGION || $REGION == all ]]; then
 else
   regions=$REGION
 fi  
+pids=()
+status=0
 for r in $(echo "$regions"); do
   if [[ "$r" != "$GOOGLE_REGION" ]]; then
     google::publish_image_object "$r" &
+    pids+=($!)
   fi
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

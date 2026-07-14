@@ -115,10 +115,14 @@ fi
 # echo "$public_key" > .download/mycs-key-$id.pem
 echo "" > .download/mycs-key-00000.pem
 
-vagrant::build_box "$BOX_NAME" \
-  "$BOX_VERSION" \
-  "$BUILD_DIR/packer/build-vagrant.pkr.hcl" 2>&1 \
-  | tee $LOG_DIR/build-vagrant.log &
-
-# Wait for all parallel jobs to finish
-wait
+(
+  vagrant::build_box "$BOX_NAME" \
+    "$BOX_VERSION" \
+    "$BUILD_DIR/packer/build-vagrant.pkr.hcl" 2>&1 \
+    | tee "$LOG_DIR/build-vagrant.log"
+  exit "${PIPESTATUS[0]}"
+) &
+pid=$!
+if ! wait "$pid"; then
+  exit 1
+fi

@@ -122,11 +122,18 @@ aws ec2 modify-image-attribute \
   --launch-permission "Add=[{Group=all}]"
 
 regions=${3:-$(aws ec2 describe-regions --output text | cut -f4)}
+pids=()
+status=0
 for r in $(echo "$regions"); do
   if [[ "$r" != "$SOURCE_REGION" ]]; then
     aws::publish_ami "$r" "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME" &
+    pids+=($!)
   fi
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"
