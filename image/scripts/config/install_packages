@@ -328,7 +328,7 @@ mycs hard nofile 8192
 ---EOF
 
 pushd /tmp/download
-unzip mycs-node_linux_${binary_arch}.zip
+unzip mycs-node-service_linux_${binary_arch}.zip
 mv mycs-node /usr/local/bin
 mv mycs-daemon /usr/local/bin
 mv headscale /usr/local/bin

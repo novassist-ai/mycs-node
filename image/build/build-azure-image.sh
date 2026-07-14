@@ -117,27 +117,24 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
-# MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
-# if [[ $IS_DEV_BUILD == yes ]]; then
-#   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
-# elif [[ $MYCS_NODE_VER == latest ]]; then
-#   gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# else
-#   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# fi
-
-# TODO: remove this — stub release zip until real mycs-node artifacts are published
-(
-  stub_dir=$(mktemp -d)
-  trap 'rm -rf "$stub_dir"' EXIT
-  cd "$stub_dir"
-  for f in mycs-node mycs-daemon headscale tailscaled tailscale version; do
-    : >"$f"
-  done
-  chmod +x mycs-node mycs-daemon headscale tailscaled tailscale
-  zip -q "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip" \
-    mycs-node mycs-daemon headscale tailscaled tailscale version
-)
+# Download mycs-node-service release
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+if [[ $IS_DEV_BUILD == yes ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+elif [[ $MYCS_NODE_VER == latest ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+else
+  gh release download "$MYCS_NODE_VER" --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+fi
 
 # download mycloudspace api public key
 # public_keys=$(aws --region us-east-1 \

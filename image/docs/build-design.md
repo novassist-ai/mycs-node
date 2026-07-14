@@ -121,7 +121,7 @@ flowchart TB
 1. Validate required CLIs (`aws`, `gh`, `jq`, cloud-specific tools).
 2. Create `.download/` containing:
    - `version` — image version string passed as script argument.
-   - `mycs-node_linux_{arch}.zip` — from S3 (dev) or GitHub releases (prod).
+   - `mycs-node-service_linux_{arch}.zip` — from S3 (dev) or GitHub releases (prod).
    - `mycs-key-{id}.pem` — MyCloudSpace API public key from DynamoDB `AppConfig`.
 3. Delete any existing image with the same name (region-local).
 4. Invoke `packer build` with cloud-specific variables.
@@ -156,7 +156,7 @@ flowchart TB
 
 ### MyCloudSpace node installation
 
-From `/tmp/download/mycs-node_linux_{arch}.zip`:
+From `/tmp/download/mycs-node-service_linux_{arch}.zip`:
 
 - Extracts `mycs-node`, `mycs-daemon`, `tailscale`, `tailscaled`, `headscale` → `/usr/local/bin/`
 - Creates systemd units for `mycs-node`, `mycs-daemon`, `tailscaled` (all **disabled**)
@@ -218,7 +218,7 @@ Use when the host OS lacks a consistent toolchain. Mount the repository and run 
 
 | `IS_DEV_BUILD` | mycs-node source | API key source |
 |----------------|------------------|----------------|
-| `yes` (default) | `s3://mycsdev-{region}-deploy-artifacts/releases/mycs-node_linux_{arch}.zip` | DynamoDB `mycs{MYCS_ENV}_AppConfig` |
+| `yes` (default) | `s3://mycsdev-{region}-deploy-artifacts/releases/mycs-node-service_linux_{arch}.zip` | DynamoDB `mycs{MYCS_ENV}_AppConfig` |
 | `no` | GitHub release `novassist-ai/mycs-node` (`MYCS_NODE_VER`, default `latest`) | Same DynamoDB lookup |
 
 Dev builds require **AWS credentials** even when building GCP, Azure, or OVH images (artifact and key download).
