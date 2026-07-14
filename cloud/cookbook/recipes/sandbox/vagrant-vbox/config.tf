@@ -1,5 +1,5 @@
 module "config" {
-  source = "github.com/appbricks/cloud-inceptor.git/modules/bastion-config"
+  source = "github.com/novassist-ai/mycs-node.git//cloud/modules/bastion-config?ref=dev"
 
   mycs_node_private_key = var.mycs_node_private_key
   mycs_node_id_key      = var.mycs_node_id_key
