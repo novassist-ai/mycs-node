@@ -134,7 +134,7 @@ variable "bastion_use_project_image" {
 }
 
 variable "bastion_image_name" {
-  default = "appbricks-bastion_dev"
+  default = "mycs-node-image_dev"
 }
 
 variable "bastion_image_bucket_prefix" {
