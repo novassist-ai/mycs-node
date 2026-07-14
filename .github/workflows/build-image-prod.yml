@@ -81,7 +81,6 @@ jobs:
       AWS_DEFAULT_REGION: us-east-1
       VERSION: ${{ needs.create-release-tag.outputs.version }}
       IS_DEV_BUILD: "no"
-      MYCS_NODE_RELEASE_REPO: appbricks/mycloudspace-node
 
     steps:
       - name: Checkout
