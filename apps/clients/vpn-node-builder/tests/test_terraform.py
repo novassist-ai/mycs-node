@@ -8,7 +8,11 @@ import pytest
 from vpn_node_builder.cloud.credentials import CloudSession
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.process import CommandResult
-from vpn_node_builder.terraform.backend import build_backend_config, ensure_backend_resources
+from vpn_node_builder.terraform.backend import (
+    build_backend_config,
+    delete_backend_resources,
+    ensure_backend_resources,
+)
 from vpn_node_builder.terraform.lifecycle import (
     taint_resources_from_input,
     terraform_apply,
@@ -57,6 +61,51 @@ def test_ensure_backend_creates_s3_bucket(monkeypatch) -> None:
     session.bind_environ(env)
     ensure_backend_resources("s3", region="us-east-1", environ=env, session=session)
     assert any(c[:3] == ("aws", "s3", "mb") for c in calls)
+
+
+def test_delete_backend_resources_s3(monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(tuple(args))
+        if tuple(args[:3]) == ("aws", "s3", "ls"):
+            return CommandResult(
+                args=tuple(args),
+                returncode=0,
+                stdout="2024-01-01 00:00:00 demo-vpn-tfstate-us-east-1\n",
+                stderr="",
+            )
+        return CommandResult(args=tuple(args), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("vpn_node_builder.terraform.backend.run_cmd", fake_run)
+    env = {
+        "TF_VAR_name": "demo",
+        "AWS_ACCESS_KEY": "a",
+        "AWS_SECRET_KEY": "b",
+    }
+    session = CloudSession()
+    session.bind_environ(env)
+    deleted = delete_backend_resources(
+        "s3", region="us-east-1", environ=env, session=session
+    )
+    assert deleted == "s3://demo-vpn-tfstate-us-east-1"
+    assert ("aws", "s3", "rb", "s3://demo-vpn-tfstate-us-east-1", "--force") in calls
+
+
+def test_delete_backend_resources_local_is_noop(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "vpn_node_builder.terraform.backend.run_cmd",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not run")),
+    )
+    assert (
+        delete_backend_resources(
+            "local",
+            region=None,
+            environ={},
+            session=CloudSession(),
+        )
+        is None
+    )
 
 
 def test_set_cloud_region_aws(monkeypatch) -> None:

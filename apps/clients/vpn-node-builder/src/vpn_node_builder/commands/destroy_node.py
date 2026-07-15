@@ -15,6 +15,7 @@ from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
+from vpn_node_builder.terraform.backend import delete_backend_resources
 from vpn_node_builder.terraform.lifecycle import terraform_destroy, terraform_init
 from vpn_node_builder.terraform.region import set_cloud_region
 from vpn_node_builder.ui import print_cli_error
@@ -37,6 +38,15 @@ def destroy_node(
         "--region",
         help="The region where the node to be destroyed is deployed",
     ),
+    delete_remote_state: bool = typer.Option(
+        False,
+        "-x",
+        "--delete-remote-state",
+        help=(
+            "After destroy, delete the remote Terraform state bucket/container "
+            "for this deployment (s3/gcs bucket or Azure container)"
+        ),
+    ),
     debug: bool = typer.Option(
         False,
         "-d",
@@ -46,6 +56,7 @@ def destroy_node(
 ) -> None:
     """Destroy a node that has been deployed to the given region."""
     region = resolve_option(region, None)
+    delete_remote_state = resolve_option(delete_remote_state, False)
     debug = resolve_option(debug, False)
     set_debug(debug)
     try:
@@ -74,6 +85,28 @@ def destroy_node(
             environ=env,
         )
         console.print("[green]Destroy completed.[/green]")
+        if delete_remote_state:
+            if not validated.backend:
+                console.print(
+                    "[yellow]No Terraform backend configured; "
+                    "nothing to delete for remote state.[/yellow]"
+                )
+            else:
+                deleted = delete_backend_resources(
+                    validated.backend,
+                    region=region,
+                    environ=env,
+                    session=ctx.session,
+                )
+                if deleted:
+                    console.print(
+                        f"[green]Deleted remote Terraform state: {deleted}[/green]"
+                    )
+                else:
+                    console.print(
+                        "[yellow]Remote Terraform state storage was not found "
+                        "or does not apply to this backend.[/yellow]"
+                    )
     except VpnNodeBuilderError as exc:
         print_cli_error(exc)
         raise typer.Exit(code=1) from exc

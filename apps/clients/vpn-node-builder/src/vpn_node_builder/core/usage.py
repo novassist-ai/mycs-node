@@ -47,10 +47,12 @@ def usage_destroy_node(
 ) -> str:
     return (
         f"\nUSAGE: vpnb destroy-node {node_type} {cloud} "
-        "[-r|--region <REGION>] [-d|--debug]\n\n"
+        "[-r|--region <REGION>] [-x|--delete-remote-state] [-d|--debug]\n\n"
         "  This CLI command destroys a node that has been deployed to the given region.\n\n"
-        "  -r|--region <REGION>  The region where the node to be destroyed is deployed\n"
-        "  -d|--debug            Enable trace output\n"
+        "  -r|--region <REGION>         The region where the node to be destroyed is deployed\n"
+        "  -x|--delete-remote-state     Delete the remote Terraform state bucket/container "
+        "after destroy\n"
+        "  -d|--debug                   Enable trace output\n"
     )
 
 
