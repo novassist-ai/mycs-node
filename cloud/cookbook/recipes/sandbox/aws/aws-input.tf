@@ -43,7 +43,7 @@ variable "aws_dns_zone" {
 #
 variable "bastion_instance_type" {
   description = "The AWS EC2 instance type of the VPN node."
-  default = "t4g.micro"
+  default = "t4g.small"
 }
 
 # The MyCS api service port
