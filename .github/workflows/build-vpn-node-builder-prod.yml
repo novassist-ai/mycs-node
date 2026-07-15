@@ -8,11 +8,6 @@ on:
         description: Bastion AMI name to bake in (default = latest mycs-node-image_X.Y.Z)
         required: false
         type: string
-      image_tag:
-        description: Docker image tag (default = latest; bastion dispatch passes 0.0.N)
-        required: false
-        default: latest
-        type: string
   push:
     branches: [main]
     paths:
@@ -24,13 +19,68 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: novassist-ai/vpn-node-builder
+  APP_PREFIX: vpnb
+  MAJOR_VERSION: 0
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
+  assert-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require main branch
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::build-vpn-node-builder-prod may only run on the 'main' branch (got ${GITHUB_REF_NAME})."
+            exit 1
+          fi
+
+  create-release-tag:
+    needs: assert-branch
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release-tag.outputs.release_tag }}
+      version: ${{ steps.release-tag.outputs.version }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release version
+        id: release-tag
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+          release_tag=$(cicd/scripts/generate-version.sh \
+            -n "${APP_PREFIX}" \
+            -v "${MAJOR_VERSION}" \
+            -b main)
+
+          if [[ -z "${release_tag}" ]]; then
+            echo "Failed to generate release tag"
+            exit 1
+          fi
+
+          version=${release_tag#${APP_PREFIX}_}
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Prod vpn-node-builder version: ${version} (git tag ${release_tag})"
+
   build-and-publish:
+    needs: create-release-tag
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -55,23 +105,18 @@ jobs:
 
       - name: Resolve image tags
         id: tag
+        env:
+          VERSION: ${{ needs.create-release-tag.outputs.version }}
         run: |
-          tag="${{ inputs.image_tag }}"
-          if [[ -z "${tag}" ]]; then
-            tag=latest
-          fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-
           repo="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          tags="${repo}:latest"
-          if [[ "${tag}" != "latest" ]]; then
-            tags="${tags}"$'\n'"${repo}:${tag}"
-          fi
+          version="${VERSION}"
           {
             echo "tags<<EOF"
-            echo "${tags}"
+            echo "${repo}:latest"
+            echo "${repo}:${version}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "smoke=${repo}:latest" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
@@ -99,12 +144,12 @@ jobs:
           tags: ${{ steps.tag.outputs.tags }}
           build-args: |
             env=prod
-            version=${{ steps.tag.outputs.tag }}
+            version=${{ steps.tag.outputs.version }}
             bastion_image_name=${{ steps.bastion.outputs.name }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=MyCS vpn-node-builder CLI (prod)
-            org.opencontainers.image.version=${{ steps.tag.outputs.tag }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
 
       - name: Smoke test
         run: |
@@ -112,3 +157,31 @@ jobs:
           docker run --rm "${{ steps.tag.outputs.smoke }}" --version
           docker run --rm "${{ steps.tag.outputs.smoke }}" --help
           docker run --rm "${{ steps.tag.outputs.smoke }}" doctor
+
+  tag_prod_build:
+    needs:
+      - create-release-tag
+      - build-and-publish
+    if: github.ref == 'refs/heads/main' && needs.build-and-publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tag release
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          last_commit_msg=$(git log -1 --pretty=%B)
+          release_tag=${{ needs.create-release-tag.outputs.release_tag }}
+          git tag -a "${release_tag}" -m "vpn-node-builder prod release ${release_tag}: last commit => ${last_commit_msg}"
+          git push origin "refs/tags/${release_tag}"

@@ -17,8 +17,8 @@ VPN client config and optional traffic-masking tunnels.
 **Packaging (Phase 6):** `Dockerfile`, host launchers (`scripts/vpnb-docker` as `vpnb` /
 `vpnb-dev`, Windows `vpnb*.cmd` / `vpnb*.ps1`), `build-docker.sh`, Homebrew formula
 `vpn-node-builder` (`vpnb` → GHCR `:latest`, `vpnb-dev` → `:dev`). CI workflows
-`build-vpn-node-builder-dev.yml` / `build-vpn-node-builder-prod.yml`. GHCR publish and
-stable formula bumps are Phase 7.
+`build-vpn-node-builder-dev.yml` / `build-vpn-node-builder-prod.yml` (git tags `vpnb_*`;
+GHCR tags unprefixed `:dev` / `:latest` / `:X.Y.Z[-devN]`). Stable formula bumps are Phase 7.
 
 ## Documentation
 

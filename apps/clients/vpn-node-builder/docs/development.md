@@ -105,9 +105,9 @@ Resolve bastion image name:
 ```
 
 CI: `.github/workflows/build-vpn-node-builder-dev.yml` (branch `dev`, pushes
-`ghcr.io/novassist-ai/vpn-node-builder:dev`) and `build-vpn-node-builder-prod.yml`
-(branch `main`, pushes `:latest` and optional `:0.0.N`). PRs to `dev` build and
-smoke only (no push).
+`:dev` + unprefixed `:X.Y.Z-devN`, git tag `vpnb_X.Y.Z-devN`) and
+`build-vpn-node-builder-prod.yml` (branch `main`, pushes `:latest` + `:X.Y.Z`,
+git tag `vpnb_X.Y.Z`). PRs to `dev` build and smoke only (no push / no git tag).
 
 ---
 

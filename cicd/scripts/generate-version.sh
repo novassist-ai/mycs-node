@@ -165,27 +165,38 @@ latest_patch_build_ver=$(echo "$refs" \
   | awk "/refs\/tags\/${patch_release_tag}-patch[0-9]+\$/{ print }" \
   | head -1)
 
+# Parse version part from a full tag basename (handles hyphenated app names).
+# e.g. mycs-node-image_0.1.0-dev3 → ver_part=0.1.0-dev3
+tag_ver_part() {
+  local base
+  base=$(basename "$1")
+  echo "${base#${name}_}"
+}
+
 # Dev-style tag (X.Y.Z-devN): used for branch "dev" or any branch matching ^.*_dev$
 if [[ $branch == dev || $branch =~ _dev$ ]]; then
   if [[ -z $latest_dev_build_ver ]]; then
     build_tag="${major_version}.0.0-dev0"
   else
-    tag_version_part=$(basename "$latest_dev_build_ver" | sed "s/^${name}_//" | cut -d '-' -f1)
-    tag_major=$(echo "$tag_version_part" | cut -d '.' -f1)
+    tag_version_part=$(tag_ver_part "$latest_dev_build_ver")
+    tag_version_core=${tag_version_part%-dev*}
+    tag_major=$(echo "$tag_version_core" | cut -d '.' -f1)
     if [[ -n $tag_major && $major_version -gt $tag_major ]]; then
       build_tag="${major_version}.0.0-dev0"
     else
-      build_minor=$(basename "$latest_dev_build_ver" | cut -d '.' -f2)
-      build=$(basename "$latest_dev_build_ver" | cut -d '-' -f2)
-      build_number=${build#dev}
+      build_minor=$(echo "$tag_version_core" | cut -d '.' -f2)
+      build_number=${tag_version_part#*-dev}
 
-      release_minor=$(basename "$latest_prod_release_ver_for_major" | cut -d '.' -f2)
+      if [[ -n $latest_prod_release_ver_for_major ]]; then
+        release_ver_part=$(tag_ver_part "$latest_prod_release_ver_for_major")
+        release_minor=$(echo "$release_ver_part" | cut -d '.' -f2)
+      else
+        release_minor=
+      fi
       if [[ -n $release_minor && $build_minor -le $release_minor ]]; then
         build_minor=$((release_minor + 1))
         build_number=0
       else
-        build=$(basename "$latest_dev_build_ver" | cut -d '-' -f2)
-        build_number=${build#dev}
         build_number=$((build_number + 1))
       fi
       build_tag="${major_version}.${build_minor}.0-dev${build_number}"
@@ -209,8 +220,8 @@ elif [[ $branch == $latest_release_patch_branch ]]; then
   if [[ -z $latest_patch_build_ver ]]; then
     echo "${patch_release_tag}-patch0"
   else
-    build=$(basename "$latest_patch_build_ver" | cut -d '-' -f2)
-    build_number=${build#patch}
+    patch_ver_part=$(tag_ver_part "$latest_patch_build_ver")
+    build_number=${patch_ver_part#*-patch}
     build_number=$((build_number + 1))
     echo "${patch_release_tag}-patch${build_number}"
   fi
@@ -254,7 +265,7 @@ elif [[ $branch == main ]]; then
   # version (e.g. patch_smart_workflow_1.2.1 when branching off 1.2.0).
 
   if [[ $commit_from_branch =~ origin/dev ]]; then
-    echo $(basename "$latest_dev_build_ver" | cut -d '-' -f1)
+    echo "$(basename "$latest_dev_build_ver" | sed 's/-dev[0-9]*$//')"
 
   elif [[ -n $commit_from_branch && $commit_from_branch =~ origin/${latest_release_patch_branch} ]]; then
     echo "${latest_release_patch_branch#patch_}"
@@ -265,7 +276,7 @@ elif [[ $branch == main ]]; then
     if [[ -n $latest_patch_build_ver && -n $patch_release_tag ]]; then
       echo "$patch_release_tag"
     elif [[ -n $latest_dev_build_ver ]]; then
-      echo $(basename "$latest_dev_build_ver" | cut -d '-' -f1)
+      echo "$(basename "$latest_dev_build_ver" | sed 's/-dev[0-9]*$//')"
     else
       echo -e "\nERROR! Cannot determine release version (no dev build tag or patch build tag found)."
       exit 1

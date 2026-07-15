@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       bastion_image_name:
-        description: Bastion AMI name to bake in (default = latest mycs-node-image_D.*)
+        description: Bastion AMI name to bake in (default = latest mycs-node-image_X.Y.Z-devN)
         required: false
         type: string
   push:
@@ -26,13 +26,77 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: novassist-ai/vpn-node-builder
+  APP_PREFIX: vpnb
+  MAJOR_VERSION: 0
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
+  assert-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require dev branch (or PR targeting dev)
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "${{ github.base_ref }}" != "dev" ]]; then
+              echo "::error::build-vpn-node-builder-dev PRs may only target 'dev' (got ${{ github.base_ref }})."
+              exit 1
+            fi
+            exit 0
+          fi
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "::error::build-vpn-node-builder-dev may only run on the 'dev' branch (got ${GITHUB_REF_NAME})."
+            exit 1
+          fi
+
+  create-build-tag:
+    needs: assert-branch
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    outputs:
+      build_tag: ${{ steps.build_tag.outputs.build_tag }}
+      version: ${{ steps.build_tag.outputs.version }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create build tag
+        id: build_tag
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          build_tag=$(cicd/scripts/generate-version.sh \
+            -n "${APP_PREFIX}" \
+            -v "${MAJOR_VERSION}" \
+            -b "${GITHUB_REF_NAME}")
+
+          if [[ -z "${build_tag}" ]]; then
+            echo "Failed to generate build tag"
+            exit 1
+          fi
+
+          version=${build_tag#${APP_PREFIX}_}
+          echo "build_tag=${build_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Dev vpn-node-builder version: ${version} (git tag ${build_tag})"
+
   build-and-publish:
+    needs:
+      - assert-branch
+      - create-build-tag
+    if: |
+      always() &&
+      needs.assert-branch.result == 'success' &&
+      (github.event_name == 'pull_request' || needs.create-build-tag.result == 'success')
     runs-on: ubuntu-latest
 
     steps:
@@ -57,20 +121,31 @@ jobs:
 
       - name: Publish mode
         id: meta
+        env:
+          VERSION: ${{ needs.create-build-tag.outputs.version }}
         run: |
-          full="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev"
+          repo="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          version="${VERSION:-dev}"
+
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "push=false" >> "$GITHUB_OUTPUT"
             echo "load=true" >> "$GITHUB_OUTPUT"
             echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
             echo "tags=vpn-node-builder:dev" >> "$GITHUB_OUTPUT"
             echo "smoke=vpn-node-builder:dev" >> "$GITHUB_OUTPUT"
           else
             echo "push=true" >> "$GITHUB_OUTPUT"
             echo "load=false" >> "$GITHUB_OUTPUT"
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-            echo "tags=${full}" >> "$GITHUB_OUTPUT"
-            echo "smoke=${full}" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            {
+              echo "tags<<EOF"
+              echo "${repo}:dev"
+              echo "${repo}:${version}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "smoke=${repo}:dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up QEMU
@@ -101,11 +176,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             env=dev
-            version=dev
+            version=${{ steps.meta.outputs.version }}
             bastion_image_name=${{ steps.bastion.outputs.name }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=MyCS vpn-node-builder CLI (dev)
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
 
       - name: Smoke test
         run: |
@@ -115,3 +191,34 @@ jobs:
           docker run --rm "${{ steps.meta.outputs.smoke }}" --version
           docker run --rm "${{ steps.meta.outputs.smoke }}" --help
           docker run --rm "${{ steps.meta.outputs.smoke }}" doctor
+
+  tag_dev_build:
+    needs:
+      - create-build-tag
+      - build-and-publish
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/dev' &&
+      needs.build-and-publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tag build
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          last_commit_msg=$(git log -1 --pretty=%B)
+          build_tag=${{ needs.create-build-tag.outputs.build_tag }}
+          git tag -a "${build_tag}" -m "vpn-node-builder dev build ${build_tag}: last commit => ${last_commit_msg}"
+          git push origin "refs/tags/${build_tag}"

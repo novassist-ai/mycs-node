@@ -10,13 +10,26 @@ on:
       - "image/packer/**"
       - "image/scripts/**"
       - "image/www/**"
+      - ".github/workflows/build-image-dev.yml"
 
 permissions:
   contents: write
   actions: write
 
 jobs:
+  assert-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require dev branch
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/dev" ]]; then
+            echo "::error::build-image-dev may only run on the 'dev' branch (got ${GITHUB_REF_NAME})."
+            exit 1
+          fi
+
   create-build-tag:
+    needs: assert-branch
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     outputs:
       build_tag: ${{ steps.build_tag.outputs.build_tag }}
@@ -34,13 +47,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Check branch is dev
-        run: |
-          if [[ ${GITHUB_REF_NAME} != dev ]]; then
-            echo "Cannot run on branch: ${GITHUB_REF_NAME}"
-            exit 1
-          fi
 
       - name: Create build tag
         id: build_tag
@@ -69,6 +75,7 @@ jobs:
 
   build-aws-image:
     needs: create-build-tag
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
 
     defaults:
@@ -100,6 +107,7 @@ jobs:
     needs:
       - create-build-tag
       - build-aws-image
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # Push only the build tag (not the branch): --follow-tags races with other pushes.
     permissions:
@@ -129,6 +137,7 @@ jobs:
       - create-build-tag
       - build-aws-image
       - tag_dev_build
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
 
     defaults:

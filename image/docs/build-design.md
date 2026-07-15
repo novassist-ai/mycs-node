@@ -245,8 +245,8 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 |----------|---------|--------|--------|
 | `build-image-dev.yml` | Push to `dev` (paths under `image/`) or manual | `dev` | AWS only |
 | `build-image-prod.yml` | Push to `main` or manual | `main` | AWS only |
-| `build-vpn-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker smoke (`:dev`, bastion `X.Y.Z-devN`) |
-| `build-vpn-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker smoke (`:latest` / version, bastion semver) |
+| `build-vpn-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker `:dev` + `:X.Y.Z-devN`; git tag `vpnb_*` |
+| `build-vpn-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker `:latest` + `:X.Y.Z`; git tag `vpnb_*` |
 
 **Dev workflow:**
 
@@ -259,9 +259,10 @@ Local CLI may build a fixed `mycs-node-image_dev`; Actions uses semver-dev tags.
 
 **Prod workflow:**
 
-1. Auto-increments git tag `mycs-node-image_0.0.N` on `main`.
+1. Runs `cicd/scripts/generate-version.sh` on `main` → tag/AMI `mycs-node-image_X.Y.Z`
+   (derived from the latest dig tag `…-devN`, or from a patch line when applicable).
 2. Sets `IS_DEV_BUILD=no` and downloads mycs-node from `novassist-ai/mycs-node` releases.
-3. Builds and publishes the AWS AMI `mycs-node-image_0.0.N`.
+3. Builds and publishes the AWS AMI, then pushes the git tag after success.
 4. Dispatches `build-vpn-node-builder-prod.yml` with that image name.
 
 Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`.
