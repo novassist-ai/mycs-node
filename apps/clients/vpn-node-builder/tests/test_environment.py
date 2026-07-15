@@ -9,6 +9,7 @@ from vpn_node_builder.core.environment import (
     parse_shell_exports,
     require_control_files,
     require_tools,
+    source_shell_files,
     validate_environment,
 )
 from vpn_node_builder.core.errors import VpnNodeBuilderError
@@ -27,6 +28,22 @@ TF_VAR_name=demo
     assert parsed["AWS_SECRET_KEY"] == "secret value"
     assert parsed["ARM_TENANT_ID"] == "tenant"
     assert parsed["TF_VAR_name"] == "demo"
+
+
+def test_source_shell_files_expands_variables(tmp_path: Path) -> None:
+    script = tmp_path / "vars.sh"
+    script.write_text(
+        'export FOO=bar\nexport TF_VAR_name="${FOO}-demo"\n',
+        encoding="utf-8",
+    )
+    # Static parse keeps the literal expansion text
+    assert parse_shell_exports(script.read_text(encoding="utf-8"))[
+        "TF_VAR_name"
+    ] == "${FOO}-demo"
+    # Bash sourcing resolves expansions
+    env = source_shell_files([script], environ={"PATH": "/bin:/usr/bin"})
+    assert env["FOO"] == "bar"
+    assert env["TF_VAR_name"] == "bar-demo"
 
 
 def test_require_tools_missing(monkeypatch: pytest.MonkeyPatch) -> None:

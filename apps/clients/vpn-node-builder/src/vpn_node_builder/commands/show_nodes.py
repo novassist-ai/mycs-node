@@ -23,7 +23,7 @@ console = Console()
 
 
 def show_nodes() -> None:
-    """Show deployed nodes and run an interactive action menu."""
+    """Show all deployed nodes and their status."""
     try:
         ctx = prepare_command_context()
         nodes = list_nodes(

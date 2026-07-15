@@ -8,14 +8,17 @@ import time
 from collections.abc import MutableMapping
 from pathlib import Path
 
+from rich.console import Console
+
 from vpn_node_builder.cloud.credentials import CloudSession
 from vpn_node_builder.terraform.backend import (
     build_backend_config,
     ensure_backend_resources,
 )
-from vpn_node_builder.terraform.runner import run_terraform
+from vpn_node_builder.terraform.runner import run_terraform, run_terraform_tee
 
 _TAINT_LIST_RE = re.compile(r"@resource_instance_list:\s*(\S+)")
+console = Console(stderr=False)
 
 
 def terraform_init(
@@ -66,13 +69,19 @@ def terraform_plan(
     )
 
 
-def _filter_outputs_stream(line: str, *, dropping: list[bool]) -> str | None:
-    if line.startswith("Outputs:"):
-        dropping[0] = True
-        return None
-    if dropping[0]:
-        return None
-    return line
+class _OutputsDropper:
+    """Drop ``Outputs:`` and everything after (bash awk filter parity)."""
+
+    def __init__(self) -> None:
+        self._dropping = False
+
+    def __call__(self, line: str) -> str | None:
+        if line.startswith("Outputs:"):
+            self._dropping = True
+            return None
+        if self._dropping:
+            return None
+        return line
 
 
 def terraform_apply(
@@ -83,21 +92,14 @@ def terraform_apply(
 ) -> Path:
     start = time.time()
     apply_log = work_dir / "apply.log"
-    # Capture apply output, write log, omit Outputs: section from console-parity filter.
-    result = run_terraform(
+    run_terraform_tee(
         ["apply", "-auto-approve"],
         template_dir=template_dir,
         work_dir=work_dir,
         environ=environ,
-        capture=True,
+        log_path=apply_log,
+        line_filter=_OutputsDropper(),
     )
-    dropping = [False]
-    filtered_lines: list[str] = []
-    for line in result.stdout.splitlines():
-        kept = _filter_outputs_stream(line, dropping=dropping)
-        if kept is not None:
-            filtered_lines.append(kept)
-    apply_log.write_text(result.stdout, encoding="utf-8")
 
     output = run_terraform(
         ["output", "-json"],
@@ -111,7 +113,10 @@ def terraform_apply(
     _write_ssh_keys(output_path, work_dir)
 
     elapsed = int(time.time() - start)
-    _ = elapsed  # callers may log; keep parity hook
+    minutes, seconds = divmod(elapsed, 60)
+    console.print(
+        f"[green]Deploy operation completed in {minutes}m and {seconds}s.[/green]"
+    )
     return output_path
 
 
@@ -139,14 +144,14 @@ def terraform_destroy(
     work_dir: Path,
     environ: MutableMapping[str, str],
 ) -> None:
-    result = run_terraform(
+    apply_log = work_dir / "apply.log"
+    run_terraform_tee(
         ["destroy", "-auto-approve"],
         template_dir=template_dir,
         work_dir=work_dir,
         environ=environ,
-        capture=True,
+        log_path=apply_log,
     )
-    (work_dir / "apply.log").write_text(result.stdout, encoding="utf-8")
     output_path = work_dir / "output.json"
     if output_path.exists():
         output_path.unlink()

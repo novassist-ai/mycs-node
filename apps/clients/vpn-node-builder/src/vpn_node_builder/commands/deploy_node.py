@@ -12,7 +12,8 @@ from vpn_node_builder.commands._context import (
     prepare_command_context,
     resolve_deployment,
 )
-from vpn_node_builder.core.environment import parse_shell_exports
+from vpn_node_builder.core.debug import set_debug
+from vpn_node_builder.core.environment import source_shell_files
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.terraform.lifecycle import (
     terraform_apply,
@@ -53,23 +54,62 @@ def _write_dependent_inputs(
             if verbose:
                 console.print(f"  [bold]{name}[/bold] = \"{val}\"")
     input_vars.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    environ.update(parse_shell_exports(input_vars.read_text(encoding="utf-8")))
+    environ.update(source_shell_files([input_vars], environ=environ))
 
 
 def deploy_node(
     node_type: str = typer.Argument(..., help="Node type / recipe family"),
-    cloud: str = typer.Argument(..., help="Cloud target"),
-    region: str | None = typer.Option(None, "-r", "--region"),
-    clean: bool = typer.Option(False, "-c", "--clean"),
-    init: bool = typer.Option(False, "-i", "--init"),
-    upgrade: bool = typer.Option(False, "-u", "--upgrade"),
-    no_idle_shutdown: bool = typer.Option(False, "-a", "--no-idle-shutdown"),
-    show: bool = typer.Option(False, "-s", "--show", help="Plan only"),
-    debug: bool = typer.Option(False, "-d", "--debug", hidden=True),
-    dev: bool = typer.Option(False, "--dev"),
+    cloud: str = typer.Argument(..., help="Cloud target (aws | azure | google | …)"),
+    region: str | None = typer.Option(
+        None,
+        "-r",
+        "--region",
+        help="The region to create the server in",
+    ),
+    clean: bool = typer.Option(
+        False,
+        "-c",
+        "--clean",
+        help="Clean the Terraform workspace context before deploying",
+    ),
+    init: bool = typer.Option(
+        False,
+        "-i",
+        "--init",
+        help="Re-initialize Terraform workspace context before deploying",
+    ),
+    upgrade: bool = typer.Option(
+        False,
+        "-u",
+        "--upgrade",
+        help="Re-build/upgrade the node using the most recent version",
+    ),
+    no_idle_shutdown: bool = typer.Option(
+        False,
+        "-a",
+        "--no-idle-shutdown",
+        help="Do not shut down the node when idle",
+    ),
+    show: bool = typer.Option(
+        False,
+        "-s",
+        "--show",
+        help="Show cloud resources to be created or changed but do not deploy",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "-d",
+        "--debug",
+        help="Enable trace output",
+    ),
+    dev: bool = typer.Option(
+        False,
+        "--dev",
+        help="Use development settings for this deployment",
+    ),
 ) -> None:
-    """Deploy or update a VPN node."""
-    _ = debug
+    """Create or update a VPN node in the given cloud region."""
+    set_debug(debug)
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(

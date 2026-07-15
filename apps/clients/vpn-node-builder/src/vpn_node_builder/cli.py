@@ -9,7 +9,10 @@ from vpn_node_builder.commands import register_commands
 
 app = typer.Typer(
     name="vpnb",
-    help="MyCS vpn-node-builder — deploy and manage VPN node environments.",
+    help=(
+        "Manage personal cloud VPN nodes across multiple cloud regions. "
+        "Use a subcommand such as init, show-regions, deploy-node, or show-nodes."
+    ),
     no_args_is_help=True,
     add_completion=False,
 )

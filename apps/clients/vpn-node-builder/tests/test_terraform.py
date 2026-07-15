@@ -130,15 +130,30 @@ def test_terraform_apply_writes_output_and_keys(monkeypatch, tmp_path: Path) -> 
     work = tmp_path / "work"
     template.mkdir()
     work.mkdir()
+    printed: list[str] = []
+
+    def fake_tee(args, **kwargs):
+        assert args[0] == "apply"
+        log_path: Path = kwargs["log_path"]
+        log_path.write_text(
+            "Applying...\nOutputs:\nsecret = x\n", encoding="utf-8"
+        )
+        line_filter = kwargs.get("line_filter")
+        for line in ["Applying...", "Outputs:", "secret = x"]:
+            if line_filter is None:
+                printed.append(line)
+            else:
+                kept = line_filter(line)
+                if kept is not None:
+                    printed.append(kept)
+        return CommandResult(
+            args=tuple(args),
+            returncode=0,
+            stdout="Applying...\nOutputs:\nsecret = x\n",
+            stderr="",
+        )
 
     def fake_run_tf(args, **kwargs):
-        if args[0] == "apply":
-            return CommandResult(
-                args=tuple(args),
-                returncode=0,
-                stdout="Applying...\nOutputs:\nsecret = x\n",
-                stderr="",
-            )
         if args[0] == "output":
             payload = {
                 "cb_managed_instances": {
@@ -154,10 +169,16 @@ def test_terraform_apply_writes_output_and_keys(monkeypatch, tmp_path: Path) -> 
             )
         raise AssertionError(args)
 
-    monkeypatch.setattr("vpn_node_builder.terraform.lifecycle.run_terraform", fake_run_tf)
+    monkeypatch.setattr(
+        "vpn_node_builder.terraform.lifecycle.run_terraform_tee", fake_tee
+    )
+    monkeypatch.setattr(
+        "vpn_node_builder.terraform.lifecycle.run_terraform", fake_run_tf
+    )
     output = terraform_apply(template_dir=template, work_dir=work, environ={})
     assert output.is_file()
     assert (work / "apply.log").is_file()
+    assert printed == ["Applying..."]
     key = work / "node1-ssh-key.pem"
     assert key.read_text(encoding="utf-8") == "PRIVATE"
     assert oct(key.stat().st_mode & 0o777) == "0o600"

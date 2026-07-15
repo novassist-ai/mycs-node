@@ -19,6 +19,7 @@ from vpn_node_builder.commands._context import (
     require_run_dir,
     resolve_deployment,
 )
+from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 
 console = Console()
@@ -55,15 +56,35 @@ def _download(
 
 
 def download_vpn_config(
-    node_type: str = typer.Argument(...),
-    cloud: str = typer.Argument(...),
-    region: str | None = typer.Option(None, "-r", "--region"),
-    user: str = typer.Option(..., "-u", "--user"),
-    password: str = typer.Option(..., "-p", "--password"),
-    debug: bool = typer.Option(False, "-d", "--debug", hidden=True),
+    node_type: str = typer.Argument(..., help="Node type / recipe family"),
+    cloud: str = typer.Argument(..., help="Cloud target"),
+    region: str | None = typer.Option(
+        None,
+        "-r",
+        "--region",
+        help="The region of the server from which the configuration should be downloaded",
+    ),
+    user: str = typer.Option(
+        ...,
+        "-u",
+        "--user",
+        help="The name of the VPN user whose client configuration should be downloaded",
+    ),
+    password: str = typer.Option(
+        ...,
+        "-p",
+        "--password",
+        help="The password of the VPN user",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "-d",
+        "--debug",
+        help="Enable trace output",
+    ),
 ) -> None:
-    """Download VPN client configuration from a deployed node."""
-    _ = debug
+    """Download the VPN client configuration from a bastion node in a given region."""
+    set_debug(debug)
     try:
         if not user or not password:
             raise VpnNodeBuilderError(

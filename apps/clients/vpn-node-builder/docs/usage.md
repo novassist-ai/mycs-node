@@ -35,6 +35,9 @@ do not.
 Almost all commands require EULA acceptance (stored under `.workspace/run/`).
 Deploy-oriented commands also require tools on `PATH` and the two control files
 in the working directory (`vpnb doctor` reports these without failing hard).
+`cloud-creds.sh`, `build-vars.sh`, and per-run `input-vars.sh` are **sourced via
+bash** (same as the legacy spacenode CLI), so shell expansions in those files
+resolve correctly.
 
 ---
 
@@ -94,6 +97,7 @@ vpnb deploy-node sandbox aws -r us-east-1 -u    # upgrade/rebuild bastion
 | `-u/--upgrade` | Taint bastion resources before apply |
 | `-a/--no-idle-shutdown` | Disable idle shutdown action |
 | `-s/--show` | `terraform plan` only (no apply) |
+| `-d/--debug` | Trace external commands (`+ …`) |
 | `--dev` | Print dependent-recipe input variables |
 
 **Dependent recipes** use:

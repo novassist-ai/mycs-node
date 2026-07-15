@@ -80,9 +80,9 @@ def require_run_dir(run_dir: Path) -> None:
 
 
 def load_input_vars(run_dir: Path, environ: dict[str, str]) -> None:
-    """Merge ``input-vars.sh`` exports into environ if present."""
+    """Merge ``input-vars.sh`` exports into environ if present (bash-sourced)."""
     path = run_dir / "input-vars.sh"
     if path.is_file():
-        from vpn_node_builder.core.environment import load_shell_exports
+        from vpn_node_builder.core.environment import source_shell_files
 
-        environ.update(load_shell_exports(path))
+        environ.update(source_shell_files([path], environ=environ))

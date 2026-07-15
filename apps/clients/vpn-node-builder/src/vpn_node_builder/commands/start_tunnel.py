@@ -16,6 +16,7 @@ from vpn_node_builder.commands._context import (
     require_run_dir,
     resolve_deployment,
 )
+from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 
 console = Console()
@@ -32,18 +33,36 @@ TUNNEL_TYPES = frozenset(
 
 
 def start_tunnel(
-    node_type: str = typer.Argument(..., help="Node type (required; fixed vs old CLI)"),
-    cloud: str = typer.Argument(...),
-    region: str | None = typer.Option(None, "-r", "--region"),
-    tunnel_type: str = typer.Option(..., "-t", "--type"),
-    debug: bool = typer.Option(False, "-d", "--debug", hidden=True),
+    node_type: str = typer.Argument(..., help="Node type / recipe family"),
+    cloud: str = typer.Argument(..., help="Cloud target"),
+    region: str | None = typer.Option(
+        None,
+        "-r",
+        "--region",
+        help="The region where the node is deployed",
+    ),
+    tunnel_type: str = typer.Option(
+        ...,
+        "-t",
+        "--type",
+        help=(
+            "Tunnel type: udp_over_tcp | udp_over_icmp | udp_over_udp | "
+            "udp_over_udp_with_fec | tcp_over_udp_with_fec"
+        ),
+    ),
+    debug: bool = typer.Option(
+        False,
+        "-d",
+        "--debug",
+        help="Enable trace output",
+    ),
 ) -> None:
-    """Start tunnel services that obfuscate VPN traffic to a node.
+    """Start tunnel services that obfuscate VPN traffic to a bastion node.
 
-    Requires ``NODE_TYPE`` and ``CLOUD`` (the former bash command omitted
-    ``NODE_TYPE``, which broke workspace resolution).
+    Available for ``wg`` and ``ovpn`` VPN types. Requires ``NODE_TYPE`` and
+    ``CLOUD`` (the former bash command omitted ``NODE_TYPE``).
     """
-    _ = debug
+    set_debug(debug)
     try:
         if tunnel_type not in TUNNEL_TYPES:
             raise VpnNodeBuilderError(

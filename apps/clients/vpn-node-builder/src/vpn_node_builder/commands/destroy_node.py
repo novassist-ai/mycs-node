@@ -11,6 +11,7 @@ from vpn_node_builder.commands._context import (
     require_run_dir,
     resolve_deployment,
 )
+from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.terraform.lifecycle import terraform_destroy, terraform_init
 from vpn_node_builder.terraform.region import set_cloud_region
@@ -19,13 +20,23 @@ console = Console()
 
 
 def destroy_node(
-    node_type: str = typer.Argument(...),
-    cloud: str = typer.Argument(...),
-    region: str | None = typer.Option(None, "-r", "--region"),
-    debug: bool = typer.Option(False, "-d", "--debug", hidden=True),
+    node_type: str = typer.Argument(..., help="Node type / recipe family"),
+    cloud: str = typer.Argument(..., help="Cloud target"),
+    region: str | None = typer.Option(
+        None,
+        "-r",
+        "--region",
+        help="The region where the node to be destroyed is deployed",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "-d",
+        "--debug",
+        help="Enable trace output",
+    ),
 ) -> None:
-    """Destroy a deployed node."""
-    _ = debug
+    """Destroy a node that has been deployed to the given region."""
+    set_debug(debug)
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
@@ -54,13 +65,23 @@ def destroy_node(
 
 
 def reinit_node(
-    node_type: str = typer.Argument(...),
-    cloud: str = typer.Argument(...),
-    region: str | None = typer.Option(None, "-r", "--region"),
-    debug: bool = typer.Option(False, "-d", "--debug", hidden=True),
+    node_type: str = typer.Argument(..., help="Node type / recipe family"),
+    cloud: str = typer.Argument(..., help="Cloud target"),
+    region: str | None = typer.Option(
+        None,
+        "-r",
+        "--region",
+        help="The region where the node is deployed",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "-d",
+        "--debug",
+        help="Enable trace output",
+    ),
 ) -> None:
-    """Re-initialize Terraform remote state for a node."""
-    _ = debug
+    """Re-initialize the remote Terraform state of a node in the given region."""
+    set_debug(debug)
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
@@ -69,7 +90,7 @@ def reinit_node(
         require_run_dir(run_dir)
         env = ctx.environ
         env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
-        env["TF_VAR_vpn_idle_action"] = ""
+        env["TF_VAR_idle_action"] = ""
         set_cloud_region(
             cloud,
             region,

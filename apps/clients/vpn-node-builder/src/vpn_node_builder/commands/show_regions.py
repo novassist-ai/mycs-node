@@ -29,9 +29,12 @@ _DOCS = {
 
 
 def show_regions(
-    cloud: str = typer.Argument(..., help="Cloud: aws | azure | google"),
+    cloud: str = typer.Argument(
+        ...,
+        help='Cloud to list regions for: "aws", "azure", or "google"',
+    ),
 ) -> None:
-    """Show regions nodes can be created in."""
+    """Show regions that can be targeted for the supported public clouds."""
     try:
         ctx = prepare_command_context()
         if cloud not in _DOCS:

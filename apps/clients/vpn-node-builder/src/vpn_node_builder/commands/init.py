@@ -16,7 +16,7 @@ console = Console()
 
 
 def init_cmd() -> None:
-    """Create cloud-creds.sh and build-vars.sh stubs in the working directory."""
+    """Initialize the current folder with control files for deployment scripts."""
     try:
         workspace = set_working_dir(cwd=Path.cwd())
         check_eula(workspace.workspace_root)

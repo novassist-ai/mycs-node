@@ -66,11 +66,12 @@ found, it creates `.workspace` in the cwd.
 | `core/paths.py` | Repo / cookbook / utils resolution |
 | `core/workspace.py` | `.workspace`, template links, recipe validation |
 | `core/eula.py` | EULA gate (`https://novassist.ai/legal/`) |
-| `core/environment.py` | Soft/hard tool checks; load control files |
+| `core/environment.py` | Soft/hard tool checks; bash-source control files |
+| `core/debug.py` | `-d/--debug` trace (`+ cmd`) for subprocesses |
 | `core/credentials.py` | Required env vars per cloud |
 | `core/init_files.py` | Stub file contents for `vpnb init` |
 | `cloud/` | Provider session, regions, inventory, start/stop |
-| `terraform/` | Backend resources + Terraform lifecycle |
+| `terraform/` | Backend + lifecycle; apply/destroy tee to `apply.log`, drop `Outputs:`, print timing |
 
 ## Cloud targets
 
