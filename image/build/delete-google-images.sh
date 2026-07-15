@@ -21,14 +21,16 @@ if [[ ! -e $GOOGLE_CREDENTIALS ]]; then
 fi
 
 if [[ -n $1 ]]; then
-  IMAGE_NAME="mycs-bastion-$1"
+  IMAGE_NAME="mycs-node-image-$1"
 else
-  IMAGE_NAME="mycs-bastion"
+  IMAGE_NAME="mycs-node-image"
 fi
 
 REGION="${2:-${GOOGLE_REGION-all}}"
 
 set -euo pipefail
+
+pids=()
 
 function google::delete_shared_image_objects() {
   
@@ -38,7 +40,7 @@ function google::delete_shared_image_objects() {
   echo -e "Removing shared images and logs from bucket '$publish_bucket'..."
 
   set +e
-  gsutil rm "gs://${publish_bucket}/mycs-bastion/${image_object_name}.tar.gz"
+  gsutil rm "gs://${publish_bucket}/mycs-node-image/${image_object_name}.tar.gz"
   gsutil rm "gs://${publish_bucket}/logs/${image_object_name}.tar.gz.exporter.log"
   set -e
 
@@ -50,8 +52,8 @@ function google::delete_shared_images() {
   local image=$1
   local region=$2
 
-  local image_version=$(echo ${image#mycs-bastion-*} | tr '[:lower:]' '[:upper:]' | tr '-' '.')
-  local image_object_name="mycs-bastion_${image_version}"
+  local image_version=$(echo ${image#mycs-node-image-*} | tr '[:lower:]' '[:upper:]' | tr '-' '.')
+  local image_object_name="mycs-node-image_${image_version}"
 
   local regions
   local publish_bucket
@@ -64,6 +66,7 @@ function google::delete_shared_images() {
   for r in $(echo "$regions"); do
     publish_bucket=${GS_PUBLISH_BUCKET_PREFIX:-mycsimages}_${r}
     google::delete_shared_image_objects "$image_object_name" "$publish_bucket" &
+    pids+=($!)
   done
 }
 
@@ -72,10 +75,11 @@ function google::delete_images() {
   local image=$1
   local region=$2
 
-  local image_list=$(gcloud compute images list --filter="name~'$image'" | awk '/mycs-bastion/{ print $1 }' 2>/dev/null)
+  local image_list=$(gcloud compute images list --filter="name~'$image'" | awk '/mycs-node-image/{ print $1 }' 2>/dev/null)
   for image in $image_list; do
     echo -e "\nDeleting image with name '$image'..."
     gcloud compute images delete -q "$image" &
+    pids+=($!)
 
     google::delete_shared_images "$image" "$region"
   done
@@ -90,5 +94,10 @@ gcloud config set project --quiet $GOOGLE_PROJECT
 
 google::delete_images "$IMAGE_NAME" "$REGION"
 
-# Wait for child processes to finish
-wait
+status=0
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

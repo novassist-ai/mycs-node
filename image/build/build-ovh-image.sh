@@ -100,40 +100,37 @@ rm -fr "$BUILD_DIR/.download"
 mkdir -p "$BUILD_DIR/.download"
 echo -n "${IMAGE_VERSION}" > "$BUILD_DIR/.download/version"
 
-# Dev S3 artifacts are arm64-only; OVH builds use amd64 from GitHub releases.
-# Use legacy repo until novassist-ai/mycs-node publishes release artifacts.
-# MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
-# if [[ $IS_DEV_BUILD == yes ]]; then
-#   gh release download --clobber \
-#     --pattern "mycs-node_linux_${OSARCH}.zip" \
-#     --repo "$MYCS_NODE_RELEASE_REPO" \
-#     --dir "$BUILD_DIR/.download"
-# elif [[ $MYCS_NODE_VER == latest ]]; then
-#   gh release download --clobber \
-#     --pattern "mycs-node_linux_${OSARCH}.zip" \
-#     --repo "$MYCS_NODE_RELEASE_REPO" \
-#     --dir "$BUILD_DIR/.download"
-# else
-#   gh release download "$MYCS_NODE_VER" --clobber \
-#     --pattern "mycs-node_linux_${OSARCH}.zip" \
-#     --repo "$MYCS_NODE_RELEASE_REPO" \
-#     --dir "$BUILD_DIR/.download"
-# fi
-
-# TODO: remove this
-touch "$BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip"
+# Download mycs-node-service release
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+if [[ $IS_DEV_BUILD == yes ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+elif [[ $MYCS_NODE_VER == latest ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+else
+  gh release download "$MYCS_NODE_VER" --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+fi
 
 # download mycloudspace api public key
-public_keys=$(aws --region "$AWS_REGION" \
-  dynamodb query \
-  --table-name "mycs${MYCS_ENV}-${REGION_SHORT_NAME}_AppConfig" \
-  --key-condition-expression "#keyName = :key" \
-  --expression-attribute-names '{"#keyName":"key"}' \
-  --expression-attribute-values '{":key":{"S":"appKey"}}' \
-  --no-scan-index-forward)
-id=$(echo "$public_keys" | jq -r '.Items[0].id.S')
-public_key=$(echo "$public_keys" | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-echo "$public_key" > "$BUILD_DIR/.download/mycs-key-${id}.pem"
+# public_keys=$(aws --region "$AWS_REGION" \
+#   dynamodb query \
+#   --table-name "mycs${MYCS_ENV}-${REGION_SHORT_NAME}_AppConfig" \
+#   --key-condition-expression "#keyName = :key" \
+#   --expression-attribute-names '{"#keyName":"key"}' \
+#   --expression-attribute-values '{":key":{"S":"appKey"}}' \
+#   --no-scan-index-forward)
+# id=$(echo "$public_keys" | jq -r '.Items[0].id.S')
+# public_key=$(echo "$public_keys" | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+# echo "$public_key" > "$BUILD_DIR/.download/mycs-key-${id}.pem"
+echo "" > "$BUILD_DIR/.download/mycs-key-00000.pem"
 
 echo "Building OVHcloud image '${IMAGE_NAME}' in region '${BUILD_REGION}'."
 set +e

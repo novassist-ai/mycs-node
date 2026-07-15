@@ -136,20 +136,29 @@ snapshot_list=$(az snapshot list --resource-group "$ARM_DEFAULT_RESOURCE_GROUP" 
     --arg pattern $PUBLISH_SNAPSHOT_PATTERN \
     '.[] | select(.name|test($pattern)) | "\(.id)|\(.name)"')
 
+status=0
 for s in $(echo -e "$snapshot_list"); do
 
   id=$(echo $s | awk -F'|' '{print $1}')
   snapshot_name=$(echo $s | awk -F'|' '{print $2}')
   version=${snapshot_name%_*} && version=${version#*_} && version=$(echo "$version" | tr '_' '.')
-  publish_vhd_name="mycs-bastion_${version}.vhd"
+  publish_vhd_name="mycs-node-image_${version}.vhd"
 
   echo -e "\nDeleting image snapshot '$snapshot_name'."
   az snapshot delete --ids $id
 
+  pids=()
   for l in $(echo "$STORAGE_LOCATIONS"); do
-    (echo "$SKIP_REGIONS" | grep "  $l:" 2>&1 >/dev/null) || \
+    if ! echo "$SKIP_REGIONS" | grep "  $l:" >/dev/null 2>&1; then
       azure::delete_image_snapshot "$l" "$publish_vhd_name" "$snapshot_name" &
+      pids+=($!)
+    fi
   done
-  wait
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then
+      status=1
+    fi
+  done
 
 done
+exit "$status"

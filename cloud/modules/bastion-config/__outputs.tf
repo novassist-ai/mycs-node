@@ -6,7 +6,8 @@
 # Root CA for signing self-signed cert
 #
 output "root_ca_key" {
-  value = local.root_ca_key
+  value     = local.root_ca_key
+  sensitive = true
 }
 
 output "root_ca_cert" {
@@ -16,17 +17,20 @@ output "root_ca_cert" {
 # Cloud-Init configuration file setting 
 # up the Bastion instance on first boot
 output "bastion_cloud_init_config" {
-  value = data.cloudinit_config.bastion-cloudinit.rendered
+  value     = data.cloudinit_config.bastion-cloudinit.rendered
+  sensitive = true
 }
 
 # Raw cloud-init config
 output "bastion_cloud_init_config_raw" {
-  value = element(data.cloudinit_config.bastion-cloudinit.part, 1).content
+  value     = element(data.cloudinit_config.bastion-cloudinit.part, 1).content
+  sensitive = true
 }
 
 # The password generated for the VPN admin user
 output "bastion_admin_password" {
-  value = random_string.bastion-admin-password.result
+  value     = random_string.bastion-admin-password.result
+  sensitive = true
 }
 
 output "bastion_admin_sshkey" {
@@ -41,5 +45,6 @@ output "bastion_openssh_public_key" {
 # The api-key required to adminster the 
 # internal zone managed by powerdns
 output "powerdns_api_key" {
-  value = random_string.powerdns-api-key.result
+  value     = random_string.powerdns-api-key.result
+  sensitive = true
 }

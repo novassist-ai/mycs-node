@@ -272,7 +272,7 @@ variable "derp_stun_port" {
 # Attributes for generating self-signed certificates
 #
 variable "company_name" {
-  default = "AppBricks, Inc."
+  default = "NovAssist, Inc."
 }
 variable "organization_name" {
   default = "My Cloud Space"

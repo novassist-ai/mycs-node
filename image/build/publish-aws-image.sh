@@ -21,9 +21,81 @@ if [[ -z $2 ]]; then
   echo -e "ERROR! Only tagged image builds can be published"
   exit 1
 fi
-IMAGE_NAME="mycs-bastion_$2"
+IMAGE_NAME="mycs-node-image_$2"
 
 set -euo pipefail
+
+# Returns 0 if the region is enabled for this account (or does not require opt-in).
+function aws::region_enabled() {
+  local region=$1
+  local query_region=${2:-${AWS_DEFAULT_REGION:-us-east-1}}
+  local status
+
+  status=$(aws ec2 describe-regions \
+    --all-regions \
+    --region "$query_region" \
+    --filters "Name=region-name,Values=$region" \
+    --query 'Regions[0].OptInStatus' \
+    --output text 2>/dev/null || true)
+
+  [[ "$status" == "opt-in-not-required" || "$status" == "opted-in" ]]
+}
+
+# Ensure account-level AMI Block Public Access is off in the region so AMIs can be shared publicly.
+function aws::ensure_ami_public_shareable() {
+  local region=$1
+  local state
+  local managed_by
+
+  local bpa
+  bpa=$(aws ec2 get-image-block-public-access-state --region "$region" --output json)
+  state=$(echo "$bpa" | jq -r '.ImageBlockPublicAccessState // empty')
+  managed_by=$(echo "$bpa" | jq -r '.ManagedBy // "account"')
+
+  if [[ "$state" == "unblocked" ]]; then
+    return 0
+  fi
+
+  if [[ "$managed_by" == "declarative-policy" ]]; then
+    echo "ERROR! AMI Block Public Access is enabled in '$region' by a declarative policy and cannot be disabled from this account."
+    return 1
+  fi
+
+  echo "Disabling AMI Block Public Access in region '$region' (current state: $state)..."
+  aws ec2 disable-image-block-public-access --region "$region" >/dev/null
+
+  # Setting can take a short time to apply; wait until API reports unblocked.
+  local attempts=0
+  while [[ $attempts -lt 30 ]]; do
+    state=$(aws ec2 get-image-block-public-access-state \
+      --region "$region" \
+      --query 'ImageBlockPublicAccessState' \
+      --output text)
+    if [[ "$state" == "unblocked" ]]; then
+      echo "AMI Block Public Access is unblocked in region '$region'."
+      return 0
+    fi
+    attempts=$((attempts + 1))
+    sleep 2
+  done
+
+  echo "ERROR! Timed out waiting for AMI Block Public Access to become unblocked in region '$region'."
+  return 1
+}
+
+function aws::make_image_public() {
+  local region=$1
+  local image_id=$2
+  local image_name=$3
+
+  aws::ensure_ami_public_shareable "$region"
+
+  echo "Making image '$image_name' in region '$region' public."
+  aws ec2 modify-image-attribute \
+    --region "$region" \
+    --image-id "$image_id" \
+    --launch-permission "Add=[{Group=all}]"
+}
 
 function aws::delete_image() {
 
@@ -95,11 +167,7 @@ function aws::publish_ami() {
       | jq -r '.Images[].State')
   done
 
-  echo "Making image '$image_name' in region '$dest_region' public."
-  aws ec2 modify-image-attribute \
-    --region "$dest_region" \
-    --image-id "$image_id" \
-    --launch-permission "Add=[{Group=all}]"
+  aws::make_image_public "$dest_region" "$image_id" "$image_name"
 }
 
 SOURCE_REGION=$1
@@ -116,17 +184,26 @@ if [[ -z $SOURCE_AMI ]]; then
   exit 1
 fi
 
-aws ec2 modify-image-attribute \
-  --region "$SOURCE_REGION" \
-  --image-id "$SOURCE_AMI" \
-  --launch-permission "Add=[{Group=all}]"
+aws::make_image_public "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME"
 
 regions=${3:-$(aws ec2 describe-regions --output text | cut -f4)}
+pids=()
+status=0
 for r in $(echo "$regions"); do
-  if [[ "$r" != "$SOURCE_REGION" ]]; then
-    aws::publish_ami "$r" "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME" &
+  if [[ "$r" == "$SOURCE_REGION" ]]; then
+    continue
   fi
+  if ! aws::region_enabled "$r" "$SOURCE_REGION"; then
+    echo "WARNING: Skipping publish to region '$r' — not enabled for this AWS account."
+    continue
+  fi
+  aws::publish_ami "$r" "$SOURCE_REGION" "$SOURCE_AMI" "$IMAGE_NAME" &
+  pids+=($!)
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

@@ -54,8 +54,8 @@ fi
 
 # Append version to image name
 IMAGE_VERSION=${1:-dev}
-IMAGE_NAME="mycs-bastion-${MYCS_ENV}"
-IMAGE_DISK_SNAPSHOT_NAME="novassistbastion"
+IMAGE_NAME="mycs-node-image-${MYCS_ENV}"
+IMAGE_DISK_SNAPSHOT_NAME="mycsnodeimage"
 IMAGE_DISK_SNAPSHOT_NAME="${IMAGE_DISK_SNAPSHOT_NAME}_$(echo ${IMAGE_VERSION} | sed 's/\./_/g')" 
 
 ARM_DEFAULT_RESOURCE_GROUP=${ARM_DEFAULT_RESOURCE_GROUP:-external}
@@ -117,29 +117,37 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
-# MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
-# if [[ $IS_DEV_BUILD == yes ]]; then
-#   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
-# elif [[ $MYCS_NODE_VER == latest ]]; then
-#   gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# else
-#   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# fi
-
-# TODO: remove this
-touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
+# Download mycs-node-service release
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+if [[ $IS_DEV_BUILD == yes ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+elif [[ $MYCS_NODE_VER == latest ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+else
+  gh release download "$MYCS_NODE_VER" --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+fi
 
 # download mycloudspace api public key
-public_keys=$(aws --region us-east-1 \
-  dynamodb query \
-  --table-name mycs${MYCS_ENV}_AppConfig \
-  --key-condition-expression "#keyName = :key" \
-  --expression-attribute-names '{"#keyName":"key"}' \
-  --expression-attribute-values '{":key":{"S":"appKey"}}' \
-  --no-scan-index-forward)
-id=$(echo $public_keys | jq -r '.Items[0].id.S')
-public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-echo "$public_key" > .download/mycs-key-$id.pem
+# public_keys=$(aws --region us-east-1 \
+#   dynamodb query \
+#   --table-name mycs${MYCS_ENV}_AppConfig \
+#   --key-condition-expression "#keyName = :key" \
+#   --expression-attribute-names '{"#keyName":"key"}' \
+#   --expression-attribute-values '{":key":{"S":"appKey"}}' \
+#   --no-scan-index-forward)
+# id=$(echo $public_keys | jq -r '.Items[0].id.S')
+# public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+# echo "$public_key" > .download/mycs-key-$id.pem
+echo "" > .download/mycs-key-00000.pem
 
 echo "Building image for location $LOCATION in resource group $ARM_DEFAULT_RESOURCE_GROUP."
 azure::build_image "$LOCATION" \

@@ -121,7 +121,7 @@ flowchart TB
 1. Validate required CLIs (`aws`, `gh`, `jq`, cloud-specific tools).
 2. Create `.download/` containing:
    - `version` — image version string passed as script argument.
-   - `mycs-node_linux_{arch}.zip` — from S3 (dev) or GitHub releases (prod).
+   - `mycs-node-service_linux_{arch}.zip` — from S3 (dev) or GitHub releases (prod).
    - `mycs-key-{id}.pem` — MyCloudSpace API public key from DynamoDB `AppConfig`.
 3. Delete any existing image with the same name (region-local).
 4. Invoke `packer build` with cloud-specific variables.
@@ -156,7 +156,7 @@ flowchart TB
 
 ### MyCloudSpace node installation
 
-From `/tmp/download/mycs-node_linux_{arch}.zip`:
+From `/tmp/download/mycs-node-service_linux_{arch}.zip`:
 
 - Extracts `mycs-node`, `mycs-daemon`, `tailscale`, `tailscaled`, `headscale` → `/usr/local/bin/`
 - Creates systemd units for `mycs-node`, `mycs-daemon`, `tailscaled` (all **disabled**)
@@ -218,7 +218,7 @@ Use when the host OS lacks a consistent toolchain. Mount the repository and run 
 
 | `IS_DEV_BUILD` | mycs-node source | API key source |
 |----------------|------------------|----------------|
-| `yes` (default) | `s3://mycsdev-{region}-deploy-artifacts/releases/mycs-node_linux_{arch}.zip` | DynamoDB `mycs{MYCS_ENV}_AppConfig` |
+| `yes` (default) | `s3://mycsdev-{region}-deploy-artifacts/releases/mycs-node-service_linux_{arch}.zip` | DynamoDB `mycs{MYCS_ENV}_AppConfig` |
 | `no` | GitHub release `novassist-ai/mycs-node` (`MYCS_NODE_VER`, default `latest`) | Same DynamoDB lookup |
 
 Dev builds require **AWS credentials** even when building GCP, Azure, or OVH images (artifact and key download).
@@ -229,11 +229,11 @@ Dev builds require **AWS credentials** even when building GCP, Azure, or OVH ima
 
 | Cloud | Image name pattern | Notes |
 |-------|-------------------|-------|
-| AWS | `mycs-bastion_{version}` | ARM64 AMI |
-| GCP | `mycs-bastion-{version}` | Dots → hyphens; exported `.tar.gz` to GCS |
-| Azure | `mycs-bastion-{env}_{location}` | Snapshot: `novassistbastion_{version}_{location}` |
-| OVH | `mycs-bastion_{version}` | Private Glance image; QCOW2 export for publish |
-| Vagrant | `mycloudspace/mycs-bastion` | VirtualBox box on Vagrant Cloud |
+| AWS | `mycs-node-image_{version}` | ARM64 AMI |
+| GCP | `mycs-node-image-{version}` | Dots → hyphens; exported `.tar.gz` to GCS under `mycs-node-image/` |
+| Azure | `mycs-node-image-{env}_{location}` | Snapshot: `mycsnodeimage_{version}` |
+| OVH | `mycs-node-image_{version}` | Private Glance image; QCOW2 export for publish |
+| Vagrant | `mycloudspace/mycs-node-image` | VirtualBox box on Vagrant Cloud |
 
 Log files: `build-{cloud}-{region}.log` in the directory where the build script is invoked.
 
@@ -245,24 +245,25 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 |----------|---------|--------|--------|
 | `build-image-dev.yml` | Push to `dev` (paths under `image/`) or manual | `dev` | AWS only |
 | `build-image-prod.yml` | Push to `main` or manual | `main` | AWS only |
-| `build-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker smoke (`:dev`, bastion `D.*`) |
-| `build-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker smoke (`:latest` / version, bastion semver) |
+| `build-vpn-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker `:dev` + `:X.Y.Z-devN`; git tag `vpnb_*` |
+| `build-vpn-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker `:latest` + `:X.Y.Z`; git tag `vpnb_*` |
 
 **Dev workflow:**
 
-1. Creates version `D.YYMMDDHHMMSS` → AMI name `mycs-bastion_D.…`.
-2. Deletes prior AMIs matching `mycs-bastion_D.*`.
-3. Builds in `us-east-1`, publishes to additional AWS regions.
-4. Dispatches `build-node-builder-dev.yml` with that bastion image name.
+1. Runs `cicd/scripts/generate-version.sh` → tag/AMI `mycs-node-image_X.Y.Z-devN`.
+2. Builds in `us-east-1`, publishes to additional AWS regions.
+3. Pushes the git tag after a successful build.
+4. Dispatches `build-vpn-node-builder-dev.yml` with that bastion image name.
 
-Local CLI may build a fixed `mycs-bastion_dev`; Actions always uses `D.*`.
+Local CLI may build a fixed `mycs-node-image_dev`; Actions uses semver-dev tags.
 
 **Prod workflow:**
 
-1. Auto-increments semver tag `0.0.N` on `main`.
+1. Runs `cicd/scripts/generate-version.sh` on `main` → tag/AMI `mycs-node-image_X.Y.Z`
+   (derived from the latest dig tag `…-devN`, or from a patch line when applicable).
 2. Sets `IS_DEV_BUILD=no` and downloads mycs-node from `novassist-ai/mycs-node` releases.
-3. Builds and publishes the AWS AMI.
-4. Dispatches `build-node-builder-prod.yml` with `mycs-bastion_0.0.N`.
+3. Builds and publishes the AWS AMI, then pushes the git tag after success.
+4. Dispatches `build-vpn-node-builder-prod.yml` with that image name.
 
 Required secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `GH_TOKEN`.
 

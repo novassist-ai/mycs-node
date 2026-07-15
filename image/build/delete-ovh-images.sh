@@ -16,7 +16,7 @@ ovh::validate_auth
 if [[ -n "${1:-}" ]]; then
   IMAGE_NAME=$(ovh::image_name_for_version "$1")
 else
-  IMAGE_NAME="mycs-bastion"
+  IMAGE_NAME="mycs-node-image"
 fi
 
 REGION="${2:-all}"
@@ -46,8 +46,16 @@ else
   regions=$REGION
 fi
 
+pids=()
+status=0
 for r in $regions; do
   ovh::delete_images "$r" "$IMAGE_NAME" &
+  pids+=($!)
 done
 
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

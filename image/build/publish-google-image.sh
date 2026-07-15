@@ -24,7 +24,7 @@ if [[ -z $1 ]]; then
 fi
 
 SOURCE_BUCKET=${GS_PUBLISH_BUCKET_PREFIX:-mycsimages}_${GOOGLE_REGION}
-IMAGE_OBJECT_NAME="mycs-bastion_$1"
+IMAGE_OBJECT_NAME="mycs-node-image_$1"
 REGION="${2:-all}"
 
 set -euo pipefail
@@ -58,8 +58,8 @@ function google::publish_image_object() {
   google::create_bucket "$publish_bucket" "$region"
 
   gsutil cp \
-    "gs://${SOURCE_BUCKET}/mycs-bastion/${IMAGE_OBJECT_NAME}.tar.gz" \
-    "gs://${publish_bucket}/mycs-bastion/${IMAGE_OBJECT_NAME}.tar.gz"
+    "gs://${SOURCE_BUCKET}/mycs-node-image/${IMAGE_OBJECT_NAME}.tar.gz" \
+    "gs://${publish_bucket}/mycs-node-image/${IMAGE_OBJECT_NAME}.tar.gz"
 }
 
 gcloud auth activate-service-account --key-file=$GOOGLE_CREDENTIALS
@@ -71,11 +71,18 @@ if [[ -z $REGION || $REGION == all ]]; then
 else
   regions=$REGION
 fi  
+pids=()
+status=0
 for r in $(echo "$regions"); do
   if [[ "$r" != "$GOOGLE_REGION" ]]; then
     google::publish_image_object "$r" &
+    pids+=($!)
   fi
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

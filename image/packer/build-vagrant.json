@@ -54,7 +54,7 @@
     "post-processors": [
         {
             "type": "vagrant-cloud",
-            "box_tag": "mycloudspace/mycs-bastion",
+            "box_tag": "mycloudspace/mycs-node-image",
             "version": "{{user `version`}}"
         }
     ]

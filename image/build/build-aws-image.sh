@@ -39,7 +39,7 @@ fi
 
 # Append version to AMI name
 IMAGE_VERSION=${2:-dev}
-IMAGE_NAME="mycs-bastion_${IMAGE_VERSION}"
+IMAGE_NAME="mycs-node-image_${IMAGE_VERSION}"
 
 set -euo pipefail
 
@@ -104,29 +104,37 @@ rm -fr $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${IMAGE_VERSION}" > $BUILD_DIR/.download/version
 
-# MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
-# if [[ $IS_DEV_BUILD == yes ]]; then
-#   aws s3 cp s3://mycsdev-${REGION_SHORT_NAME}-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
-# elif [[ $MYCS_NODE_VER == latest ]]; then
-#   gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# else
-#   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo $MYCS_NODE_RELEASE_REPO --dir .download
-# fi
-
-# TODO: remove this
-touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
+# Download mycs-node-service release
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+if [[ $IS_DEV_BUILD == yes ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+elif [[ $MYCS_NODE_VER == latest ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+else
+  gh release download "$MYCS_NODE_VER" --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+fi
 
 # download mycloudspace api public key
-public_keys=$(aws --region us-east-1 \
-  dynamodb query \
-  --table-name mycs${MYCS_ENV}-${REGION_SHORT_NAME}_AppConfig \
-  --key-condition-expression "#keyName = :key" \
-  --expression-attribute-names '{"#keyName":"key"}' \
-  --expression-attribute-values '{":key":{"S":"appKey"}}' \
-  --no-scan-index-forward)
-id=$(echo $public_keys | jq -r '.Items[0].id.S')
-public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-echo "$public_key" > .download/mycs-key-$id.pem
+# public_keys=$(aws --region us-east-1 \
+#   dynamodb query \
+#   --table-name mycs${MYCS_ENV}-${REGION_SHORT_NAME}_AppConfig \
+#   --key-condition-expression "#keyName = :key" \
+#   --expression-attribute-names '{"#keyName":"key"}' \
+#   --expression-attribute-values '{":key":{"S":"appKey"}}' \
+#   --no-scan-index-forward)
+# id=$(echo $public_keys | jq -r '.Items[0].id.S')
+# public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+# echo "$public_key" > .download/mycs-key-$id.pem
+echo "" > .download/mycs-key-00000.pem
 
 # retrieve base image
 regions=${1:-$(aws ec2 describe-regions --output text | cut -f4)}
@@ -139,12 +147,23 @@ base_amis=$(curl -sL https://cloud-images.ubuntu.com/locator/releasesTable \
     | .string)"')
 
 # build images for each region
+pids=()
+status=0
 for r in $(echo "$regions"); do
   echo "Building AMI for region $r."
-  aws::build_ami "$IMAGE_NAME" \
-    "$r" "$base_amis" "$BUILD_DIR/packer/build-aws.pkr.hcl" 2>&1 \
-    | tee $LOG_DIR/build-aws-$r.log &
+  (
+    aws::build_ami "$IMAGE_NAME" \
+      "$r" "$base_amis" "$BUILD_DIR/packer/build-aws.pkr.hcl" 2>&1 \
+      | tee "$LOG_DIR/build-aws-$r.log"
+    # Prefer packer's status over tee's (bare `wait` returns 0 even on child failure).
+    exit "${PIPESTATUS[0]}"
+  ) &
+  pids+=($!)
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+exit "$status"

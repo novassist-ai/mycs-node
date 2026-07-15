@@ -39,7 +39,7 @@ if [[ -z $2 ]]; then
   echo -e "ERROR! Only tagged image builds can be published"
   exit 1
 fi
-PUBLISH_VHD_NAME="mycs-bastion_${2}.vhd"
+PUBLISH_VHD_NAME="mycs-node-image_${2}.vhd"
 PUBLISH_SNAPSHOT_NAME="${IMAGE_SNAPSHOT_PREFIX}_$(echo $2 | sed 's/\./_/g')_${1}" 
 
 echo "Publishing image snapshot '$PUBLISH_SNAPSHOT_NAME' to unmanaged VHD image '$PUBLISH_VHD_NAME'."
@@ -195,16 +195,24 @@ skip_regions='
   westus2stage:
   westusstage:'
 
+pids=()
+status=0
 for l in $(echo "$locations"); do
-  (echo "$skip_regions" | grep "  $l:" 2>&1 >/dev/null) || \
+  if ! echo "$skip_regions" | grep "  $l:" >/dev/null 2>&1; then
     azure::publish_image_snapshot "$l" "$sas_url" &
+    pids+=($!)
+  fi
 done
 
-# Wait for all parallel jobs to finish
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
 
 set +e
 az snapshot revoke-access \
   --resource-group "$ARM_DEFAULT_RESOURCE_GROUP" \
   --name "$PUBLISH_SNAPSHOT_NAME" 2>&1 >/dev/null
 set -e
+exit "$status"

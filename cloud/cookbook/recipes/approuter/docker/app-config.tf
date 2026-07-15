@@ -3,7 +3,7 @@
 #
 
 module "app-config" {
-  source = "github.com/appbricks/cloud-inceptor.git/modules/app-config"
+  source = "github.com/novassist-ai/mycs-node.git//cloud/modules/app-config?ref=dev"
 
   mycs_cloud_public_key_id = var.mycs_cloud_public_key_id
   mycs_cloud_public_key = var.mycs_cloud_public_key

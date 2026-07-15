@@ -133,6 +133,8 @@ else
   regions=$DEST_REGIONS
 fi
 
+pids=()
+status=0
 for r in $regions; do
   ovh::publish_image \
     "$SOURCE_REGION" \
@@ -140,8 +142,17 @@ for r in $regions; do
     "$IMAGE_NAME" \
     "$IMAGE_VERSION" \
     "$IMAGE_FILE" &
+  pids+=($!)
 done
 
-wait
+for pid in "${pids[@]}"; do
+  if ! wait "$pid"; then
+    status=1
+  fi
+done
+
+if [[ $status -ne 0 ]]; then
+  exit "$status"
+fi
 
 echo "Publish complete for image '${IMAGE_NAME}'."

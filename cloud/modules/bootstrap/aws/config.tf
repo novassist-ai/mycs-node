@@ -3,7 +3,7 @@
 # 
 # When debugging replace source github path 
 #
-# - "github.com/appbricks/cloud-inceptor//modules/bastion-config"
+# - "github.com/novassist-ai/mycs-node.git//cloud/modules/bastion-config?ref=dev"
 #
 # with relative path filesystem path.
 #

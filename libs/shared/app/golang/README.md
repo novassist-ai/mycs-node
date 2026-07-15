@@ -1,6 +1,6 @@
-# Shared Go utilities (node-builder)
+# Shared Go utilities (vpn-node-builder)
 
-Small CLI helpers used by local Terraform recipes (`sandbox/vagrant-vbox`, `approuter/docker`) via the Terraform `shell` provider. They are built into release zips and into the `novassist/node-builder` Docker image; end users do not invoke them directly.
+Small CLI helpers used by local Terraform recipes (`sandbox/vagrant-vbox`, `approuter/docker`) via the Terraform `shell` provider. They are built into release zips and into the `novassist/vpn-node-builder` Docker image; end users do not invoke them directly.
 
 ## Commands
 
@@ -27,14 +27,14 @@ Module path: `github.com/novassist-ai/mycs-node/libs/shared/app/golang`
 
 ## Build
 
-From the repository root (or via the node-builder script):
+From the repository root (or via the vpn-node-builder script):
 
 ```bash
 # Development build for the host OS/arch → .build/bin/
-./apps/clients/node-builder/scripts/build-utils.sh :dev:clean-all:
+./apps/clients/vpn-node-builder/scripts/build-utils.sh :dev:clean-all:
 
 # Release-style build for a specific OS/arch → .build/releases/
-./apps/clients/node-builder/scripts/build-utils.sh :release:clean-all: linux amd64
+./apps/clients/vpn-node-builder/scripts/build-utils.sh :release:clean-all: linux amd64
 ```
 
 Artifacts:

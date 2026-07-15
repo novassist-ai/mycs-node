@@ -42,7 +42,7 @@ else
 fi
 
 # image name and version
-BOX_NAME="mycs-bastion"
+BOX_NAME="mycs-node-image"
 BOX_VERSION=${1:-0.0.0}
 [[ $BOX_VERSION != D.* ]] || \
   BOX_VERSION=0.0.${BOX_VERSION#D.*}
@@ -54,12 +54,12 @@ function vagrant::build_box() {
   local box_version=$2
   local packer_manifest=$3
 
-  local existing_ver=$(curl -s "https://app.vagrantup.com/api/v1/box/novassist/mycs-bastion/version/${box_version}" \
+  local existing_ver=$(curl -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-node-image/version/${box_version}" \
     --request GET \
     --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
     | jq -r .version)
   if [[ $existing_ver == $box_version ]]; then
-    curl -f -s "https://app.vagrantup.com/api/v1/box/novassist/mycs-bastion/version/${box_version}" \
+    curl -f -s "https://app.vagrantup.com/api/v1/box/mycloudspace/mycs-node-image/version/${box_version}" \
       --request DELETE \
       --header "Authorization: Bearer $VAGRANT_CLOUD_TOKEN" \
       >/dev/null 2>&1
@@ -83,33 +83,46 @@ rm -fr $BUILD_DIR/.build $BUILD_DIR/.download
 mkdir -p $BUILD_DIR/.download
 echo -n "${BOX_VERSION}" > $BUILD_DIR/.download/version
 
-# if [[ $IS_DEV_BUILD == yes ]]; then
-#   aws s3 cp s3://mycsdev-deploy-artifacts/releases/mycs-node_linux_${OSARCH}.zip .download
-# elif [[ $MYCS_NODE_VER == latest ]]; then
-#   gh release download --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
-# else
-#   gh release download $MYCS_NODE_VER --clobber --pattern "mycs-node_linux_${OSARCH}.zip" --repo novassist/mycloudspace-node --dir .download
-# fi
-
-# TODO: remove this
-touch $BUILD_DIR/.download/mycs-node_linux_${OSARCH}.zip
+# Download mycs-node-service release
+MYCS_NODE_RELEASE_REPO=${MYCS_NODE_RELEASE_REPO:-novassist-ai/mycs-node}
+if [[ $IS_DEV_BUILD == yes ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+elif [[ $MYCS_NODE_VER == latest ]]; then
+  gh release download --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+else
+  gh release download "$MYCS_NODE_VER" --clobber \
+    --pattern "mycs-node-service_linux_${OSARCH}.zip" \
+    --repo "$MYCS_NODE_RELEASE_REPO" \
+    --dir "$BUILD_DIR/.download"
+fi
 
 # download mycloudspace api public key
-public_keys=$(aws --region us-east-1 \
-  dynamodb query \
-  --table-name mycs${MYCS_ENV}_AppConfig \
-  --key-condition-expression "#keyName = :key" \
-  --expression-attribute-names '{"#keyName":"key"}' \
-  --expression-attribute-values '{":key":{"S":"appKey"}}' \
-  --no-scan-index-forward)
-id=$(echo $public_keys | jq -r '.Items[0].id.S')
-public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
-echo "$public_key" > .download/mycs-key-$id.pem
+# public_keys=$(aws --region us-east-1 \
+#   dynamodb query \
+#   --table-name mycs${MYCS_ENV}_AppConfig \
+#   --key-condition-expression "#keyName = :key" \
+#   --expression-attribute-names '{"#keyName":"key"}' \
+#   --expression-attribute-values '{":key":{"S":"appKey"}}' \
+#   --no-scan-index-forward)
+# id=$(echo $public_keys | jq -r '.Items[0].id.S')
+# public_key=$(echo $public_keys | jq -r --arg id "$id" '.Items[] | select(.id.S == $id) | .publicKey.S')
+# echo "$public_key" > .download/mycs-key-$id.pem
+echo "" > .download/mycs-key-00000.pem
 
-vagrant::build_box "$BOX_NAME" \
-  "$BOX_VERSION" \
-  "$BUILD_DIR/packer/build-vagrant.pkr.hcl" 2>&1 \
-  | tee $LOG_DIR/build-vagrant.log &
-
-# Wait for all parallel jobs to finish
-wait
+(
+  vagrant::build_box "$BOX_NAME" \
+    "$BOX_VERSION" \
+    "$BUILD_DIR/packer/build-vagrant.pkr.hcl" 2>&1 \
+    | tee "$LOG_DIR/build-vagrant.log"
+  exit "${PIPESTATUS[0]}"
+) &
+pid=$!
+if ! wait "$pid"; then
+  exit 1
+fi
