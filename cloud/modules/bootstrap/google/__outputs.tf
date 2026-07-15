@@ -6,7 +6,8 @@
 # Root CA for signing self-signed cert
 #
 output "root_ca_key" {
-  value = module.config.root_ca_key
+  value     = module.config.root_ca_key
+  sensitive = true
 }
 
 output "root_ca_cert" {
@@ -108,7 +109,8 @@ output "bastion_admin_user" {
 }
 
 output "bastion_admin_password" {
-  value = module.config.bastion_admin_password
+  value     = module.config.bastion_admin_password
+  sensitive = true
 }
 
 output "bastion_admin_sshkey" {
@@ -139,7 +141,8 @@ output "powerdns_api_key" {
 #
 
 output "default_openssh_private_key" {
-  value = tls_private_key.default-ssh-key.private_key_pem
+  value     = tls_private_key.default-ssh-key.private_key_pem
+  sensitive = true
 }
 
 output "default_openssh_public_key" {
