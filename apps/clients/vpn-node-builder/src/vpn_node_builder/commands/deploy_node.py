@@ -12,6 +12,7 @@ from vpn_node_builder.commands._context import (
     prepare_command_context,
     resolve_deployment,
 )
+from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.environment import source_shell_files
 from vpn_node_builder.core.errors import VpnNodeBuilderError
@@ -90,7 +91,13 @@ def deploy_node(
         False,
         "-u",
         "--upgrade",
-        help="Re-build/upgrade the node using the most recent version",
+        help="Rebuild the bastion VM (keeps the data store volume)",
+    ),
+    rebuild: bool = typer.Option(
+        False,
+        "-b",
+        "--rebuild",
+        help="Rebuild the bastion VM and replace its data store volume",
     ),
     no_idle_shutdown: bool = typer.Option(
         False,
@@ -117,6 +124,15 @@ def deploy_node(
     ),
 ) -> None:
     """Create or update a VPN node in the given cloud region."""
+    region = resolve_option(region, None)
+    clean = resolve_option(clean, False)
+    init = resolve_option(init, False)
+    upgrade = resolve_option(upgrade, False)
+    rebuild = resolve_option(rebuild, False)
+    no_idle_shutdown = resolve_option(no_idle_shutdown, False)
+    show = resolve_option(show, False)
+    debug = resolve_option(debug, False)
+    dev = resolve_option(dev, False)
     set_debug(debug)
     try:
         ctx = prepare_command_context()
@@ -197,12 +213,13 @@ def deploy_node(
                 environ=env,
             )
 
-        if upgrade:
+        if rebuild or upgrade:
             terraform_taint_bastion(
                 cloud=cloud,
                 template_dir=validated.template_dir,
                 work_dir=run_dir,
                 environ=env,
+                include_data_store=rebuild,
             )
 
         if validated.input_node:

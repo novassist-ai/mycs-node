@@ -84,15 +84,29 @@ def test_set_cloud_region_aws(monkeypatch) -> None:
 
 def test_taint_resources_from_input(tmp_path: Path) -> None:
     (tmp_path / "aws-input.tf").write_text(
-        "# @resource_instance_list: module.bootstrap.aws_instance.bastion,other.x\n",
+        "# @resource_instance_list: module.bootstrap.aws_instance.bastion,other.x\n"
+        "# @resource_instance_data_list: module.bootstrap.aws_ebs_volume.bastion-data\n",
         encoding="utf-8",
     )
     assert taint_resources_from_input(tmp_path, "aws") == [
         "module.bootstrap.aws_instance.bastion",
         "other.x",
     ]
+    assert taint_resources_from_input(
+        tmp_path, "aws", include_data_store=True
+    ) == [
+        "module.bootstrap.aws_instance.bastion",
+        "other.x",
+        "module.bootstrap.aws_ebs_volume.bastion-data",
+    ]
     assert taint_resources_from_input(tmp_path, "google") == [
         "module.bootstrap.google_compute_instance.bastion"
+    ]
+    assert taint_resources_from_input(
+        tmp_path, "google", include_data_store=True
+    ) == [
+        "module.bootstrap.google_compute_instance.bastion",
+        "module.bootstrap.google_compute_disk.bastion-data",
     ]
 
 

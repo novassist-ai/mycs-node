@@ -21,8 +21,20 @@ from vpn_node_builder.terraform.filters import (
 )
 from vpn_node_builder.terraform.runner import run_terraform, run_terraform_tee
 
-_TAINT_LIST_RE = re.compile(r"@resource_instance_list:\s*(\S+)")
+_TAINT_INSTANCE_RE = re.compile(r"@resource_instance_list:\s*(\S*)")
+_TAINT_DATA_RE = re.compile(r"@resource_instance_data_list:\s*(\S*)")
 console = Console(stderr=False)
+
+_DEFAULT_INSTANCE_RESOURCES: dict[str, list[str]] = {
+    "aws": ["module.bootstrap.aws_instance.bastion"],
+    "azure": ["module.bootstrap.azurerm_linux_virtual_machine.bastion"],
+    "google": ["module.bootstrap.google_compute_instance.bastion"],
+}
+_DEFAULT_DATA_RESOURCES: dict[str, list[str]] = {
+    "aws": ["module.bootstrap.aws_ebs_volume.bastion-data"],
+    "azure": ["module.bootstrap.azurerm_managed_disk.bastion-data"],
+    "google": ["module.bootstrap.google_compute_disk.bastion-data"],
+}
 
 
 def terraform_init(
@@ -154,20 +166,61 @@ def terraform_destroy(
         output_path.unlink()
 
 
-def taint_resources_from_input(template_dir: Path, cloud: str) -> list[str]:
+def _split_resource_list(raw: str) -> list[str]:
+    return [part for part in raw.split(",") if part]
+
+
+def _annotated_resources(
+    template_dir: Path,
+    cloud: str,
+    *,
+    annotation_re: re.Pattern[str],
+    defaults: dict[str, list[str]],
+) -> list[str]:
     input_tpl = template_dir / f"{cloud}-input.tf"
     if input_tpl.is_file():
         text = input_tpl.read_text(encoding="utf-8")
-        match = _TAINT_LIST_RE.search(text)
-        if match:
-            return [part for part in match.group(1).split(",") if part]
-
-    defaults = {
-        "aws": ["module.bootstrap.aws_instance.bastion"],
-        "azure": ["module.bootstrap.azurerm_linux_virtual_machine.bastion"],
-        "google": ["module.bootstrap.google_compute_instance.bastion"],
-    }
+        match = annotation_re.search(text)
+        if match is not None:
+            return _split_resource_list(match.group(1))
     return list(defaults.get(cloud, []))
+
+
+def taint_resources_from_input(
+    template_dir: Path,
+    cloud: str,
+    *,
+    include_data_store: bool = False,
+) -> list[str]:
+    """Resources to taint for ``--upgrade`` / ``--rebuild``.
+
+    Reads ``@resource_instance_list`` (VM) and, when ``include_data_store`` is
+    true, also ``@resource_instance_data_list`` (persistent data volume).
+    """
+    resources = _annotated_resources(
+        template_dir,
+        cloud,
+        annotation_re=_TAINT_INSTANCE_RE,
+        defaults=_DEFAULT_INSTANCE_RESOURCES,
+    )
+    if include_data_store:
+        resources.extend(
+            _annotated_resources(
+                template_dir,
+                cloud,
+                annotation_re=_TAINT_DATA_RE,
+                defaults=_DEFAULT_DATA_RESOURCES,
+            )
+        )
+    # Preserve order while dropping duplicates.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for resource in resources:
+        if resource in seen:
+            continue
+        seen.add(resource)
+        unique.append(resource)
+    return unique
 
 
 def terraform_taint_bastion(
@@ -176,8 +229,11 @@ def terraform_taint_bastion(
     template_dir: Path,
     work_dir: Path,
     environ: MutableMapping[str, str],
+    include_data_store: bool = False,
 ) -> None:
-    resources = taint_resources_from_input(template_dir, cloud)
+    resources = taint_resources_from_input(
+        template_dir, cloud, include_data_store=include_data_store
+    )
     for resource in resources:
         run_terraform(
             ["taint", resource],

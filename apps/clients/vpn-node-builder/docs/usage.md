@@ -86,7 +86,8 @@ Examples:
 vpnb deploy-node sandbox aws -r us-east-1
 vpnb deploy-node sandbox vagrant-vbox
 vpnb deploy-node sandbox aws -r us-east-1 -s    # plan only
-vpnb deploy-node sandbox aws -r us-east-1 -u    # upgrade/rebuild bastion
+vpnb deploy-node sandbox aws -r us-east-1 -u    # rebuild bastion VM (keep data volume)
+vpnb deploy-node sandbox aws -r us-east-1 -b    # rebuild bastion VM + data volume
 vpnb deploy-node            # lists available NODE_TYPE values
 vpnb deploy-node sandbox    # lists available CLOUD targets for that type
 ```
@@ -96,7 +97,8 @@ vpnb deploy-node sandbox    # lists available CLOUD targets for that type
 | `-r/--region` | Required for aws / azure / google (lists regions if omitted) |
 | `-c/--clean` | Remove `.terraform*` then init |
 | `-i/--init` | Force Terraform init |
-| `-u/--upgrade` | Taint bastion resources before apply |
+| `-u/--upgrade` | Taint bastion VM (`@resource_instance_list`) before apply; keeps data store |
+| `-b/--rebuild` | Taint bastion VM and data store (`@resource_instance_data_list`) before apply |
 | `-a/--no-idle-shutdown` | Disable idle shutdown action |
 | `-s/--show` | `terraform plan` only (no apply) |
 | `-d/--debug` | Trace external commands (`+ …`) |

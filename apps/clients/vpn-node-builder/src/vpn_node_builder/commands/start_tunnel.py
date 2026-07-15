@@ -16,6 +16,7 @@ from vpn_node_builder.commands._context import (
     require_run_dir,
     resolve_deployment,
 )
+from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
@@ -72,6 +73,9 @@ def start_tunnel(
 
     Available for ``wg`` and ``ovpn`` VPN types.
     """
+    region = resolve_option(region, None)
+    tunnel_type = resolve_option(tunnel_type, None)
+    debug = resolve_option(debug, False)
     set_debug(debug)
     try:
         ctx = prepare_command_context()

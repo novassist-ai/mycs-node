@@ -131,6 +131,8 @@ def test_deploy_node_help() -> None:
     assert result.exit_code == 0
     assert "--region" in result.output
     assert "--upgrade" in result.output
+    assert "--rebuild" in result.output
+    assert "-b" in result.output
 
 
 def test_deploy_node_lists_types_when_args_omitted(

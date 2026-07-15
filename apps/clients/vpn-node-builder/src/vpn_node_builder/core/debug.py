@@ -6,9 +6,13 @@ _DEBUG = False
 
 
 def set_debug(enabled: bool) -> None:
-    """Enable or disable command tracing for this process."""
+    """Enable or disable command tracing for this process.
+
+    Only the literal ``True`` enables tracing so accidental truthy sentinels
+    (e.g. unbound Typer ``OptionInfo``) cannot turn debug on.
+    """
     global _DEBUG
-    _DEBUG = bool(enabled)
+    _DEBUG = enabled is True
 
 
 def is_debug() -> bool:
