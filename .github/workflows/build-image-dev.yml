@@ -12,31 +12,63 @@ on:
       - "image/www/**"
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 jobs:
-  create-version:
+  create-build-tag:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.create-dev-version.outputs.version }}
-      bastion_image_name: ${{ steps.create-dev-version.outputs.bastion_image_name }}
+      build_tag: ${{ steps.build_tag.outputs.build_tag }}
+      version: ${{ steps.build_tag.outputs.version }}
+      bastion_image_name: ${{ steps.build_tag.outputs.bastion_image_name }}
 
     defaults:
       run:
         shell: bash
 
+    env:
+      MAJOR_VERSION: 0
+      IMAGE_PREFIX: mycs-node-image
+
     steps:
-      - name: Create dev version
-        id: create-dev-version
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check branch is dev
         run: |
-          DEV_BUILD=D.$(date -u '+%y%m%d%H%M%S')
-          echo "version=${DEV_BUILD}" >> "$GITHUB_OUTPUT"
-          echo "bastion_image_name=mycs-node-image_${DEV_BUILD}" >> "$GITHUB_OUTPUT"
-          echo "Dev bastion version: ${DEV_BUILD} → mycs-node-image_${DEV_BUILD}"
+          if [[ ${GITHUB_REF_NAME} != dev ]]; then
+            echo "Cannot run on branch: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      - name: Create build tag
+        id: build_tag
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          build_tag=$(cicd/scripts/generate-version.sh \
+            -n "${IMAGE_PREFIX}" \
+            -v "${MAJOR_VERSION}" \
+            -b "${GITHUB_REF_NAME}")
+
+          if [[ -z "${build_tag}" ]]; then
+            echo "Failed to generate build tag"
+            exit 1
+          fi
+
+          version=${build_tag#${IMAGE_PREFIX}_}
+          bastion_image_name=${build_tag}
+
+          echo "build_tag=${build_tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "bastion_image_name=${bastion_image_name}" >> "$GITHUB_OUTPUT"
+          echo "Dev bastion version: ${version} → ${bastion_image_name}"
 
   build-aws-image:
-    needs: create-version
+    needs: create-build-tag
     runs-on: ubuntu-latest
 
     defaults:
@@ -48,7 +80,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: us-east-1
-      DEV_BUILD: ${{ needs.create-version.outputs.version }}
+      DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
       IS_DEV_BUILD: yes
 
     steps:
@@ -57,7 +89,6 @@ jobs:
 
       - name: Run build
         run: |
-          build/delete-aws-images.sh 'D.*' all &
           build/build-aws-image.sh us-east-1 "$DEV_BUILD"
 
       - name: Publish image
@@ -65,10 +96,39 @@ jobs:
           build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
             "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
+  tag_dev_build:
+    needs:
+      - create-build-tag
+      - build-aws-image
+    runs-on: ubuntu-latest
+    # Push only the build tag (not the branch): --follow-tags races with other pushes.
+    permissions:
+      contents: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Tag build
+        run: |
+          git config user.email "$(git log -1 --pretty=format:'%ae')"
+          git config user.name "$(git log -1 --pretty=format:'%an')"
+          git fetch --tags origin
+
+          last_commit_msg=$(git log -1 --pretty=%B)
+          build_tag=${{ needs.create-build-tag.outputs.build_tag }}
+          git tag -a "${build_tag}" -m "Bastion image dev build ${build_tag}: last commit => ${last_commit_msg}"
+          git push origin "refs/tags/${build_tag}"
+
   trigger-vpn-node-builder:
     needs:
-      - create-version
+      - create-build-tag
       - build-aws-image
+      - tag_dev_build
     runs-on: ubuntu-latest
 
     defaults:
@@ -84,5 +144,5 @@ jobs:
           token: ${{ github.token }}
           inputs: |
             {
-              "bastion_image_name": "${{ needs.create-version.outputs.bastion_image_name }}"
+              "bastion_image_name": "${{ needs.create-build-tag.outputs.bastion_image_name }}"
             }

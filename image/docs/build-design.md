@@ -245,17 +245,17 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 |----------|---------|--------|--------|
 | `build-image-dev.yml` | Push to `dev` (paths under `image/`) or manual | `dev` | AWS only |
 | `build-image-prod.yml` | Push to `main` or manual | `main` | AWS only |
-| `build-vpn-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker smoke (`:dev`, bastion `D.*`) |
+| `build-vpn-node-builder-dev.yml` | Push/PR to `dev`, manual, or bastion-dev dispatch | `dev` | Docker smoke (`:dev`, bastion `X.Y.Z-devN`) |
 | `build-vpn-node-builder-prod.yml` | Push to `main`, manual, or bastion-prod dispatch | `main` | Docker smoke (`:latest` / version, bastion semver) |
 
 **Dev workflow:**
 
-1. Creates version `D.YYMMDDHHMMSS` → AMI name `mycs-node-image_D.…`.
-2. Deletes prior AMIs matching `mycs-node-image_D.*`.
-3. Builds in `us-east-1`, publishes to additional AWS regions.
+1. Runs `cicd/scripts/generate-version.sh` → tag/AMI `mycs-node-image_X.Y.Z-devN`.
+2. Builds in `us-east-1`, publishes to additional AWS regions.
+3. Pushes the git tag after a successful build.
 4. Dispatches `build-vpn-node-builder-dev.yml` with that bastion image name.
 
-Local CLI may build a fixed `mycs-node-image_dev`; Actions always uses `D.*`.
+Local CLI may build a fixed `mycs-node-image_dev`; Actions uses semver-dev tags.
 
 **Prod workflow:**
 

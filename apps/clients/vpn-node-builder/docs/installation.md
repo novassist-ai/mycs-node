@@ -14,8 +14,8 @@ project directory is mounted at `/work`.
 
 | Command | Image | Bastion baked into image |
 |---------|-------|--------------------------|
-| `vpnb` | `ghcr.io/novassist-ai/vpn-node-builder:latest` | Prod semver AMI (`mycs-bastion_X.Y.Z`) |
-| `vpnb-dev` | `ghcr.io/novassist-ai/vpn-node-builder:dev` | CI tip (`mycs-bastion_D.*`) |
+| `vpnb` | `ghcr.io/novassist-ai/vpn-node-builder:latest` | Prod semver AMI (`mycs-node-image_X.Y.Z`) |
+| `vpnb-dev` | `ghcr.io/novassist-ai/vpn-node-builder:dev` | CI tip (`mycs-node-image_X.Y.Z-devN`) |
 
 Override either binary:
 
@@ -81,9 +81,9 @@ The image is built with a default `TF_VAR_bastion_image_name`:
 
 | Build env | Bastion image name |
 |-----------|-------------------|
-| **local CLI (`dev`)** | `mycs-bastion_dev` (fixed; build via Packer with `DEV_BUILD=dev`) |
-| **CI (`ci` / Actions)** | Latest `mycs-bastion_D.*` AMI, or the name passed from the bastion workflow |
-| **prod** | Latest `mycs-bastion_X.Y.Z` AMI (resolved at image build via AWS) |
+| **local CLI (`dev`)** | `mycs-node-image_dev` (fixed; build via Packer with `DEV_BUILD=dev`) |
+| **CI (`ci` / Actions)** | Latest `mycs-node-image_X.Y.Z-devN` AMI, or the name passed from the bastion workflow |
+| **prod** | Latest `mycs-node-image_X.Y.Z` AMI (resolved at image build via AWS) |
 
 No `appbricks-*` image names are used. To override for a single **native**
 deploy, set in `build-vars.sh`:

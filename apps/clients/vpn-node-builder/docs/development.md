@@ -99,9 +99,9 @@ docker run --rm -v "$(pwd):/work" -w /work novassist/vpn-node-builder:dev doctor
 Resolve bastion image name:
 
 ```bash
-./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh dev    # → mycs-bastion_dev (local CLI)
-./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh ci     # → latest mycs-bastion_D.*
-./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh prod   # → latest mycs-bastion_X.Y.Z
+./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh dev    # → mycs-node-image_dev (local CLI)
+./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh ci     # → latest mycs-node-image_X.Y.Z-devN
+./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh prod   # → latest mycs-node-image_X.Y.Z
 ```
 
 CI: `.github/workflows/build-vpn-node-builder-dev.yml` (branch `dev`, pushes

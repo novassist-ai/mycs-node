@@ -107,7 +107,7 @@ Sandbox public-cloud recipes require `var.bastion_image_name` (no default).
 
 | Source | Value |
 |--------|--------|
-| Docker image build (dev) | `mycs-node-image_dev` baked via `ENV TF_VAR_bastion_image_name` |
+| Docker image build (dev) | Latest `mycs-node-image_X.Y.Z-devN` from bastion workflow / `get-cloud-image.sh ci` |
 | Docker image build (prod) | Latest `mycs-node-image_X.Y.Z` from `scripts/get-cloud-image.sh prod` |
 | Native dev | Set in `build-vars.sh` or export before `vpnb deploy-node` |
 

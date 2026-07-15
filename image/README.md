@@ -146,7 +146,7 @@ Image naming, credentials, and full option reference: [docs/build-design.md](doc
 export AWS_ACCESS_KEY_ID=...
 export AWS_SECRET_ACCESS_KEY=...
 export AWS_DEFAULT_REGION=us-east-1
-./build/build-aws-image.sh us-east-1 D.251123055007
+./build/build-aws-image.sh us-east-1 0.0.0-dev1
 ```
 
 **Quick OVH example:**
@@ -161,10 +161,10 @@ source "$OS_OPENRC_FILE"
 
 | Workflow | Trigger | What it builds |
 |----------|---------|----------------|
-| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-node-image_D.YYMMDDHHMMSS`; multi-region publish; triggers vpn-node-builder |
+| [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-node-image_X.Y.Z-devN` via `generate-version.sh`; git tag after publish; triggers vpn-node-builder |
 | [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Git tag `mycs-node-image_0.0.N`; AWS AMI with same name; `IS_DEV_BUILD=no`; triggers vpn-node-builder |
 
-Local CLI builds may use a fixed `mycs-node-image_dev` name (`DEV_BUILD=dev`). GitHub Actions **dev** builds always use timestamped `D.*` names.
+Local CLI builds may use a fixed `mycs-node-image_dev` name (`DEV_BUILD=dev`). GitHub Actions **dev** builds use semver-dev tags (e.g. `mycs-node-image_0.0.0-dev1`).
 
 After a successful bastion publish, the workflow dispatches the matching vpn-node-builder workflow
 ([`build-vpn-node-builder-dev.yml`](../.github/workflows/build-vpn-node-builder-dev.yml) or

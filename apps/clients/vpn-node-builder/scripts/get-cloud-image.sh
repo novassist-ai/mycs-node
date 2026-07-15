@@ -4,7 +4,7 @@
 # Usage:
 #   ./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh       # local CLI → mycs-node-image_dev
 #   ./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh dev   # local CLI → mycs-node-image_dev
-#   ./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh ci    # latest GH Actions D.* AMI
+#   ./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh ci    # latest GH Actions X.Y.Z-devN AMI
 #   ./apps/clients/vpn-node-builder/scripts/get-cloud-image.sh prod  # latest mycs-node-image_X.Y.Z
 #
 # Requires AWS CLI credentials with ec2:DescribeImages (us-east-1) for ci/prod.
@@ -33,13 +33,13 @@ images=$(aws ec2 describe-images --output json \
   --filters "Name=name,Values=${prefix}_*")
 
 if [[ "${mode}" == "ci" ]]; then
-  # GH Actions bastion builds use mycs-node-image_D.YYMMDDHHMMSS
+  # GH Actions bastion builds use mycs-node-image_X.Y.Z-devN (see generate-version.sh)
   name=$(echo "$images" | jq -r --arg p "${prefix}" '
-    [.Images[] | select(.Name | test("^" + $p + "_D\\.[0-9]+$"))]
+    [.Images[] | select(.Name | test("^" + $p + "_[0-9]+\\.[0-9]+\\.[0-9]+-dev[0-9]+$"))]
     | sort_by(.CreationDate)[-1].Name // empty
   ')
   if [[ -z "${name}" ]]; then
-    echo "ERROR: No CI image found (expected ${prefix}_D.*)." >&2
+    echo "ERROR: No CI image found (expected ${prefix}_X.Y.Z-devN)." >&2
     exit 1
   fi
   echo "${name}"
