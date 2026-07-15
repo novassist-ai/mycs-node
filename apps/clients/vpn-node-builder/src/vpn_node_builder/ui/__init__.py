@@ -6,8 +6,20 @@ from rich.console import Console
 from rich.table import Table
 
 from vpn_node_builder.cloud.nodes import NodeRecord
+from vpn_node_builder.core.errors import VpnNodeBuilderError
 
 console = Console()
+
+
+def print_cli_error(exc: VpnNodeBuilderError) -> None:
+    """Print optional usage banner then the error (bash ``usage::*`` parity)."""
+    if exc.usage:
+        console.print(exc.usage.rstrip())
+        console.print()
+    if exc.soft:
+        console.print(str(exc))
+    else:
+        console.print(f"[red]ERROR![/red] {exc}")
 
 
 def print_nodes_table(nodes: list[NodeRecord]) -> None:

@@ -86,6 +86,48 @@ def test_validate_workspace_unknown_node(tmp_path: Path) -> None:
         validate_workspace(ws, node_type="nope", cloud="aws", environ={})
 
 
+def test_validate_workspace_placeholder_node_lists_types(tmp_path: Path) -> None:
+    from vpn_node_builder.core.workspace import PLACEHOLDER_NODE_TYPE
+
+    recipes = _make_recipes(tmp_path)
+    work = tmp_path / "project"
+    work.mkdir()
+    ws = set_working_dir(cwd=work, recipes_source=recipes)
+    with pytest.raises(
+        VpnNodeBuilderError, match="Please select from the available node types"
+    ) as exc:
+        validate_workspace(
+            ws,
+            node_type=PLACEHOLDER_NODE_TYPE,
+            cloud="aws",
+            environ={},
+            usage="USAGE: vpnb deploy-node …",
+        )
+    assert "sandbox" in str(exc.value)
+    assert exc.value.usage == "USAGE: vpnb deploy-node …"
+    assert exc.value.soft is True
+
+
+def test_validate_workspace_unsupported_cloud_mentions_support(
+    tmp_path: Path,
+) -> None:
+    recipes = _make_recipes(tmp_path)
+    # Add a cloud recipe dir that is not in CLOUDS_ENABLED.
+    oci = recipes / "sandbox" / "oci"
+    oci.mkdir(parents=True)
+    (oci / "cloud.tf").write_text('backend "local" {}\n', encoding="utf-8")
+    work = tmp_path / "project"
+    work.mkdir()
+    ws = set_working_dir(cwd=work, recipes_source=recipes)
+    with pytest.raises(VpnNodeBuilderError, match="NovAssist support"):
+        validate_workspace(
+            ws,
+            node_type="sandbox",
+            cloud="oci",
+            environ={"CLOUDS_ENABLED": "^(aws|azure|google)$"},
+        )
+
+
 def test_validate_workspace_unknown_cloud(tmp_path: Path) -> None:
     recipes = _make_recipes(tmp_path)
     work = tmp_path / "project"

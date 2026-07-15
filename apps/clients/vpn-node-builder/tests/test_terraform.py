@@ -134,22 +134,17 @@ def test_terraform_apply_writes_output_and_keys(monkeypatch, tmp_path: Path) -> 
 
     def fake_tee(args, **kwargs):
         assert args[0] == "apply"
+        assert "console_filter" in kwargs
         log_path: Path = kwargs["log_path"]
         log_path.write_text(
-            "Applying...\nOutputs:\nsecret = x\n", encoding="utf-8"
+            "Applying...\nOutputs:\ncb_node_version = \"1.0\"\n",
+            encoding="utf-8",
         )
-        line_filter = kwargs.get("line_filter")
-        for line in ["Applying...", "Outputs:", "secret = x"]:
-            if line_filter is None:
-                printed.append(line)
-            else:
-                kept = line_filter(line)
-                if kept is not None:
-                    printed.append(kept)
+        printed.append("streamed")
         return CommandResult(
             args=tuple(args),
             returncode=0,
-            stdout="Applying...\nOutputs:\nsecret = x\n",
+            stdout="Applying...\nOutputs:\ncb_node_version = \"1.0\"\n",
             stderr="",
         )
 
@@ -159,7 +154,7 @@ def test_terraform_apply_writes_output_and_keys(monkeypatch, tmp_path: Path) -> 
                 "cb_managed_instances": {
                     "value": [{"name": "node1", "ssh_key": "PRIVATE"}]
                 },
-                "cb_default_openssh_private_key": {"value": "DEFAULT"},
+                "cb_default_ssh_private_key": {"value": "DEFAULT"},
             }
             return CommandResult(
                 args=tuple(args),
@@ -178,8 +173,8 @@ def test_terraform_apply_writes_output_and_keys(monkeypatch, tmp_path: Path) -> 
     output = terraform_apply(template_dir=template, work_dir=work, environ={})
     assert output.is_file()
     assert (work / "apply.log").is_file()
-    assert printed == ["Applying..."]
+    assert printed == ["streamed"]
     key = work / "node1-ssh-key.pem"
     assert key.read_text(encoding="utf-8") == "PRIVATE"
     assert oct(key.stat().st_mode & 0o777) == "0o600"
-    assert (work / "default-ssh-key.pem").exists()
+    assert (work / "default-ssh-key.pem").read_text(encoding="utf-8") == "DEFAULT"

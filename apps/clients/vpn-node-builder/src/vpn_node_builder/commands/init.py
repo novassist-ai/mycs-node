@@ -8,6 +8,7 @@ import typer
 from rich.console import Console
 
 from vpn_node_builder.core.errors import VpnNodeBuilderError
+from vpn_node_builder.ui import print_cli_error
 from vpn_node_builder.core.eula import check_eula
 from vpn_node_builder.core.init_files import initialize_control_files
 from vpn_node_builder.core.workspace import set_working_dir
@@ -22,7 +23,7 @@ def init_cmd() -> None:
         check_eula(workspace.workspace_root)
         result = initialize_control_files(workspace.working_dir)
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc
 
     console.print("\n[green]Creating control files in current folder...[/green]")

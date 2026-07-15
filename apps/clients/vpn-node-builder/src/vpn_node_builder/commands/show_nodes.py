@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import subprocess
 from getpass import getpass
@@ -17,7 +18,7 @@ from vpn_node_builder.commands.destroy_node import destroy_node
 from vpn_node_builder.commands.download_vpn_config import download_vpn_config
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import cloud_requires_region
-from vpn_node_builder.ui import print_nodes_table
+from vpn_node_builder.ui import print_cli_error, print_nodes_table
 
 console = Console()
 
@@ -135,12 +136,23 @@ def show_nodes() -> None:
                 region=region_opt,
             )
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc
 
 
+def ssh_host_for_address(address: str | None, instance_ip: str | None) -> str:
+    """Choose SSH host the same way bash ``show-nodes`` does.
+
+    IP-mapped DNS names matching ``*.mycs.appbricks.org`` connect via
+    ``instance_ip``; everything else uses the displayed address.
+    """
+    addr = address or ""
+    if fnmatch.fnmatch(addr, "*.mycs.appbricks.org"):
+        return instance_ip or addr
+    return addr or (instance_ip or "")
+
+
 def _ssh_to_node(workspace_root, node) -> None:
-    region_part = node.region if node.region else ""
     if cloud_requires_region(node.cloud) and node.region:
         run_dir = workspace_root / node.node_type / node.cloud / node.region
     else:
@@ -150,10 +162,7 @@ def _ssh_to_node(workspace_root, node) -> None:
     ssh_user = str(first.get("ssh_user") or "")
     name = str(first.get("name") or "")
     key_file = run_dir / f"{name}-ssh-key.pem"
-    if ".mycs." in (node.address or ""):
-        host = node.instance_ip
-    else:
-        host = node.address or node.instance_ip
+    host = ssh_host_for_address(node.address, node.instance_ip)
     subprocess.run(
         [
             "ssh",
@@ -167,4 +176,3 @@ def _ssh_to_node(workspace_root, node) -> None:
         ],
         check=False,
     )
-    _ = region_part

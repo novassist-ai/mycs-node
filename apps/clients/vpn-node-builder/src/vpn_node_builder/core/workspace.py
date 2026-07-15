@@ -32,6 +32,10 @@ _EXTERNAL_NODE_RE = re.compile(
 )
 _BACKEND_RE = re.compile(r'backend\s+"(?P<backend>[^"]+)"')
 
+# Bash CLI placeholders when NODE_TYPE / CLOUD positionals are omitted.
+PLACEHOLDER_NODE_TYPE = "<NODE_TYPE>"
+PLACEHOLDER_CLOUD = "<CLOUD>"
+
 
 @dataclass(frozen=True)
 class WorkspaceContext:
@@ -175,8 +179,13 @@ def validate_workspace(
     cloud: str,
     region: str | None = None,
     environ: dict[str, str] | None = None,
+    usage: str | None = None,
 ) -> ValidatedWorkspace:
-    """Resolve recipe template path and deployment workspace directory."""
+    """Resolve recipe template path and deployment workspace directory.
+
+    ``usage`` is attached to unknown NODE_TYPE / CLOUD errors (bash prints
+    ``usage::<command>`` before those listings).
+    """
     env = environ if environ is not None else dict(os.environ)
     ext_root = Path(env.get(EXT_COOKBOOK_PATH_ENV, DEFAULT_EXT_COOKBOOK_PATH))
 
@@ -210,22 +219,40 @@ def validate_workspace(
         if not node_dir.exists():
             available = list_child_dirs(template_dir)
             listing = "\n".join(f'- "{name}"' for name in available) or "- (none)"
+            if node_type == PLACEHOLDER_NODE_TYPE:
+                raise VpnNodeBuilderError(
+                    "Please select from the available node types for deployment:\n"
+                    f"{listing}",
+                    usage=usage,
+                    soft=True,
+                )
             raise VpnNodeBuilderError(
                 f"Unknown node type.\n\nAvailable node types for deployment are:\n"
-                f"{listing}"
+                f"{listing}",
+                usage=usage,
             )
         cloud_dir = node_dir / cloud
         if not cloud_dir.exists():
             available = list_child_dirs(node_dir)
             listing = "\n".join(f'- "{name}"' for name in available) or "- (none)"
+            if cloud == PLACEHOLDER_CLOUD:
+                raise VpnNodeBuilderError(
+                    "Please select from the available cloud targets for deployment:\n"
+                    f"{listing}",
+                    usage=usage,
+                    soft=True,
+                )
             raise VpnNodeBuilderError(
                 f'Unknown cloud target for node of type "{node_type}".\n\n'
-                f"Cloud targets available for deployment are:\n{listing}"
+                f"Cloud targets available for deployment are:\n{listing}",
+                usage=usage,
             )
         if cloud not in clouds_enabled(env):
             raise VpnNodeBuilderError(
-                f'Cloud target "{cloud}" is not supported for public deployments yet. '
-                "Support for that cloud will be available in a future release."
+                f'Cloud target "{cloud}" is not supported for public '
+                "deployments yet. Support for that cloud will be available "
+                "in a future release. If you would still like to deploy to "
+                "the cloud specified please contact NovAssist support."
             )
         template_dir = cloud_dir
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from vpn_node_builder.core.process import CommandResult, run_cmd, run_cmd_tee
+from vpn_node_builder.core.process import CommandResult, ConsoleFilter, run_cmd, run_cmd_tee
 
 
 def terraform_env(
@@ -44,9 +44,9 @@ def run_terraform_tee(
     environ: Mapping[str, str],
     log_path: Path,
     check: bool = True,
-    line_filter: Callable[[str], str | None] | None = None,
+    console_filter: ConsoleFilter | None = None,
 ) -> CommandResult:
-    """Run terraform while teeing output to ``log_path`` (bash apply/destroy parity)."""
+    """Run terraform while teeing output to ``log_path``."""
     cmd = ["terraform", f"-chdir={template_dir}", *args]
     return run_cmd_tee(
         cmd,
@@ -54,5 +54,5 @@ def run_terraform_tee(
         environ=terraform_env(work_dir, environ),
         cwd=str(work_dir),
         check=check,
-        line_filter=line_filter,
+        console_filter=console_filter,
     )

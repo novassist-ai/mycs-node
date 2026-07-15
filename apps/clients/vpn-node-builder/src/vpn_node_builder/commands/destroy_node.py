@@ -13,15 +13,23 @@ from vpn_node_builder.commands._context import (
 )
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
+from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
 from vpn_node_builder.terraform.lifecycle import terraform_destroy, terraform_init
 from vpn_node_builder.terraform.region import set_cloud_region
+from vpn_node_builder.ui import print_cli_error
 
 console = Console()
 
 
 def destroy_node(
-    node_type: str = typer.Argument(..., help="Node type / recipe family"),
-    cloud: str = typer.Argument(..., help="Cloud target"),
+    node_type: str = typer.Argument(
+        PLACEHOLDER_NODE_TYPE,
+        help="Node type / recipe family (lists available types if omitted)",
+    ),
+    cloud: str = typer.Argument(
+        PLACEHOLDER_CLOUD,
+        help="Cloud target (lists targets if omitted)",
+    ),
     region: str | None = typer.Option(
         None,
         "-r",
@@ -40,7 +48,11 @@ def destroy_node(
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
-            ctx, node_type=node_type, cloud=cloud, region=region
+            ctx,
+            node_type=node_type,
+            cloud=cloud,
+            region=region,
+            command="destroy_node",
         )
         require_run_dir(run_dir)
         env = ctx.environ
@@ -60,13 +72,19 @@ def destroy_node(
         )
         console.print("[green]Destroy completed.[/green]")
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc
 
 
 def reinit_node(
-    node_type: str = typer.Argument(..., help="Node type / recipe family"),
-    cloud: str = typer.Argument(..., help="Cloud target"),
+    node_type: str = typer.Argument(
+        PLACEHOLDER_NODE_TYPE,
+        help="Node type / recipe family (lists available types if omitted)",
+    ),
+    cloud: str = typer.Argument(
+        PLACEHOLDER_CLOUD,
+        help="Cloud target (lists targets if omitted)",
+    ),
     region: str | None = typer.Option(
         None,
         "-r",
@@ -85,7 +103,11 @@ def reinit_node(
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
-            ctx, node_type=node_type, cloud=cloud, region=region
+            ctx,
+            node_type=node_type,
+            cloud=cloud,
+            region=region,
+            command="reinit_node",
         )
         require_run_dir(run_dir)
         env = ctx.environ
@@ -110,5 +132,5 @@ def reinit_node(
         )
         console.print("[green]Reinit completed.[/green]")
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc

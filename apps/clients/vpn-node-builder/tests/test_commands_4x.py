@@ -79,8 +79,18 @@ def test_resolve_deployment_requires_region(tmp_path: Path, monkeypatch) -> None
     ctx.workspace = set_working_dir(
         cwd=work, recipes_source=tmp_path / "cloud" / "cookbook" / "recipes"
     )
-    with pytest.raises(VpnNodeBuilderError, match="Region is required"):
+    monkeypatch.setattr(
+        "vpn_node_builder.commands._context.list_regions",
+        lambda *a, **k: ["us-east-1", "us-west-2"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "vpn_node_builder.cloud.regions.list_regions",
+        lambda *a, **k: ["us-east-1", "us-west-2"],
+    )
+    with pytest.raises(VpnNodeBuilderError, match="Please provide a cloud region") as exc:
         resolve_deployment(ctx, node_type="sandbox", cloud="aws", region=None)
+    assert exc.value.soft is True
 
     validated, run_dir = resolve_deployment(
         ctx, node_type="sandbox", cloud="aws", region="us-east-1"
@@ -121,3 +131,56 @@ def test_deploy_node_help() -> None:
     assert result.exit_code == 0
     assert "--region" in result.output
     assert "--upgrade" in result.output
+
+
+def test_deploy_node_lists_types_when_args_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = _project_with_recipes(tmp_path)
+    monkeypatch.chdir(work)
+    monkeypatch.setenv(SKIP_EULA_ENV, "1")
+    monkeypatch.setenv("VPNB_COOKBOOK_PATH", str(tmp_path / "cloud" / "cookbook"))
+    monkeypatch.setattr(
+        "vpn_node_builder.commands._context.validate_environment",
+        lambda *a, **k: {
+            "AWS_ACCESS_KEY": "a",
+            "AWS_SECRET_KEY": "b",
+            "TF_VAR_name": "demo",
+        },
+    )
+    set_working_dir(
+        cwd=work, recipes_source=tmp_path / "cloud" / "cookbook" / "recipes"
+    )
+    result = runner.invoke(app, ["deploy-node"])
+    assert result.exit_code != 0
+    assert "USAGE: vpnb deploy-node" in result.output
+    assert "Please select from the available node types" in result.output
+    assert "Unknown node type" not in result.output
+    assert "ERROR!" not in result.output
+    assert "sandbox" in result.output
+
+
+def test_deploy_node_lists_clouds_when_cloud_omitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = _project_with_recipes(tmp_path)
+    monkeypatch.chdir(work)
+    monkeypatch.setenv(SKIP_EULA_ENV, "1")
+    monkeypatch.setenv("VPNB_COOKBOOK_PATH", str(tmp_path / "cloud" / "cookbook"))
+    monkeypatch.setattr(
+        "vpn_node_builder.commands._context.validate_environment",
+        lambda *a, **k: {
+            "AWS_ACCESS_KEY": "a",
+            "AWS_SECRET_KEY": "b",
+            "TF_VAR_name": "demo",
+        },
+    )
+    set_working_dir(
+        cwd=work, recipes_source=tmp_path / "cloud" / "cookbook" / "recipes"
+    )
+    result = runner.invoke(app, ["deploy-node", "sandbox"])
+    assert result.exit_code != 0
+    assert "Please select from the available cloud targets" in result.output
+    assert "Unknown cloud target" not in result.output
+    assert "ERROR!" not in result.output
+    assert "aws" in result.output

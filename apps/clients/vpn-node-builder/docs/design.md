@@ -68,10 +68,11 @@ found, it creates `.workspace` in the cwd.
 | `core/eula.py` | EULA gate (`https://novassist.ai/legal/`) |
 | `core/environment.py` | Soft/hard tool checks; bash-source control files |
 | `core/debug.py` | `-d/--debug` trace (`+ cmd`) for subprocesses |
+| `core/usage.py` | Usage banners printed before unknown NODE_TYPE/CLOUD errors |
 | `core/credentials.py` | Required env vars per cloud |
 | `core/init_files.py` | Stub file contents for `vpnb init` |
 | `cloud/` | Provider session, regions, inventory, start/stop |
-| `terraform/` | Backend + lifecycle; apply/destroy tee to `apply.log`, drop `Outputs:`, print timing |
+| `terraform/` | Backend + lifecycle; tee plan/apply/destroy to logs with composable console filters |
 
 ## Cloud targets
 

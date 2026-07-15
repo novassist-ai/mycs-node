@@ -9,6 +9,7 @@ from vpn_node_builder.cloud.regions import list_regions
 from vpn_node_builder.commands._context import prepare_command_context
 from vpn_node_builder.core.credentials import validate_cloud_credentials
 from vpn_node_builder.core.errors import VpnNodeBuilderError
+from vpn_node_builder.ui import print_cli_error
 
 console = Console()
 
@@ -30,12 +31,20 @@ _DOCS = {
 
 def show_regions(
     cloud: str = typer.Argument(
-        ...,
+        "help",
         help='Cloud to list regions for: "aws", "azure", or "google"',
     ),
 ) -> None:
     """Show regions that can be targeted for the supported public clouds."""
     try:
+        if cloud in {"help", "-h", "--help"}:
+            console.print(
+                "\nUSAGE: vpnb show-regions <CLOUD>\n\n"
+                '  Shows regions that can be targeted for each supported cloud.\n'
+                '  Available public clouds: "aws", "azure", and "google".\n'
+            )
+            raise typer.Exit(code=0)
+
         ctx = prepare_command_context()
         if cloud not in _DOCS:
             raise VpnNodeBuilderError(
@@ -50,5 +59,5 @@ def show_regions(
         console.print("\n[green]More detail can be found at:[/green]")
         console.print(f"[blue]- {url}[/blue]")
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc

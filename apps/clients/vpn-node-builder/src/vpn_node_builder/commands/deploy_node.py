@@ -15,6 +15,7 @@ from vpn_node_builder.commands._context import (
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.environment import source_shell_files
 from vpn_node_builder.core.errors import VpnNodeBuilderError
+from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
 from vpn_node_builder.terraform.lifecycle import (
     terraform_apply,
     terraform_init,
@@ -22,6 +23,7 @@ from vpn_node_builder.terraform.lifecycle import (
     terraform_taint_bastion,
 )
 from vpn_node_builder.terraform.region import set_cloud_region
+from vpn_node_builder.ui import print_cli_error
 
 console = Console()
 
@@ -58,8 +60,14 @@ def _write_dependent_inputs(
 
 
 def deploy_node(
-    node_type: str = typer.Argument(..., help="Node type / recipe family"),
-    cloud: str = typer.Argument(..., help="Cloud target (aws | azure | google | …)"),
+    node_type: str = typer.Argument(
+        PLACEHOLDER_NODE_TYPE,
+        help="Node type / recipe family (lists available types if omitted)",
+    ),
+    cloud: str = typer.Argument(
+        PLACEHOLDER_CLOUD,
+        help="Cloud target (aws | azure | google | …); lists targets if omitted",
+    ),
     region: str | None = typer.Option(
         None,
         "-r",
@@ -105,7 +113,7 @@ def deploy_node(
     dev: bool = typer.Option(
         False,
         "--dev",
-        help="Use development settings for this deployment",
+        help="Print dependent-recipe input variables while deploying",
     ),
 ) -> None:
     """Create or update a VPN node in the given cloud region."""
@@ -113,7 +121,11 @@ def deploy_node(
     try:
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
-            ctx, node_type=node_type, cloud=cloud, region=region
+            ctx,
+            node_type=node_type,
+            cloud=cloud,
+            region=region,
+            command="deploy_node",
         )
         run_dir.mkdir(parents=True, exist_ok=True)
         env = ctx.environ
@@ -217,5 +229,5 @@ def deploy_node(
             bastion_description = str(instances[0].get("description") or "")
         console.print(f"\n{node_description}\n\n{bastion_description}")
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc

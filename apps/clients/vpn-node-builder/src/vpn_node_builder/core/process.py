@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from vpn_node_builder.core.debug import is_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
@@ -18,6 +19,12 @@ class CommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+class ConsoleFilter(Protocol):
+    def feed(self, line: str) -> Sequence[str]: ...
+
+    def flush(self) -> Sequence[str]: ...
 
 
 def run_cmd(
@@ -67,13 +74,12 @@ def run_cmd_tee(
     environ: Mapping[str, str] | None = None,
     cwd: str | None = None,
     check: bool = True,
-    line_filter: Callable[[str], str | None] | None = None,
+    console_filter: ConsoleFilter | None = None,
 ) -> CommandResult:
-    """Run a command, tee combined stdout/stderr to ``log_path``, and print filtered lines.
+    """Run a command, tee combined stdout/stderr to ``log_path``, print filtered lines.
 
-    ``line_filter`` receives each line without trailing newline; return ``None`` to
-    omit from the console (still written to the log), or the (possibly modified)
-    string to print.
+    ``console_filter`` only affects the console; the log always stores the raw
+    stream. Filters may buffer lines and must be flushed at EOF.
     """
     if is_debug():
         print(f"+ {' '.join(args)}", file=sys.stderr, flush=True)
@@ -99,12 +105,14 @@ def run_cmd_tee(
             log_file.write(raw)
             recorded.append(raw)
             line = raw.rstrip("\n")
-            if line_filter is None:
+            if console_filter is None:
                 print(line, flush=True)
             else:
-                kept = line_filter(line)
-                if kept is not None:
+                for kept in console_filter.feed(line):
                     print(kept, flush=True)
+        if console_filter is not None:
+            for kept in console_filter.flush():
+                print(kept, flush=True)
         returncode = proc.wait()
 
     result = CommandResult(

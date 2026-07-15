@@ -15,6 +15,10 @@ from vpn_node_builder.terraform.backend import (
     build_backend_config,
     ensure_backend_resources,
 )
+from vpn_node_builder.terraform.filters import (
+    DropPlanOutNoteFilter,
+    compose_filters,
+)
 from vpn_node_builder.terraform.runner import run_terraform, run_terraform_tee
 
 _TAINT_LIST_RE = re.compile(r"@resource_instance_list:\s*(\S+)")
@@ -60,28 +64,14 @@ def terraform_plan(
     work_dir: Path,
     environ: MutableMapping[str, str],
 ) -> None:
-    run_terraform(
+    run_terraform_tee(
         ["plan"],
         template_dir=template_dir,
         work_dir=work_dir,
         environ=environ,
-        capture=False,
+        log_path=work_dir / "plan.log",
+        console_filter=compose_filters(DropPlanOutNoteFilter()),
     )
-
-
-class _OutputsDropper:
-    """Drop ``Outputs:`` and everything after (bash awk filter parity)."""
-
-    def __init__(self) -> None:
-        self._dropping = False
-
-    def __call__(self, line: str) -> str | None:
-        if line.startswith("Outputs:"):
-            self._dropping = True
-            return None
-        if self._dropping:
-            return None
-        return line
 
 
 def terraform_apply(
@@ -92,13 +82,16 @@ def terraform_apply(
 ) -> Path:
     start = time.time()
     apply_log = work_dir / "apply.log"
+    # Stream full apply output (including Outputs:). Secrets must be marked
+    # ``sensitive = true`` in cookbook / module outputs so Terraform redacts them.
+    # Pass console_filter=compose_filters(...) here to filter apply console output.
     run_terraform_tee(
         ["apply", "-auto-approve"],
         template_dir=template_dir,
         work_dir=work_dir,
         environ=environ,
         log_path=apply_log,
-        line_filter=_OutputsDropper(),
+        console_filter=compose_filters(),
     )
 
     output = run_terraform(
@@ -131,7 +124,10 @@ def _write_ssh_keys(output_path: Path, work_dir: Path) -> None:
             key_path = work_dir / f"{name}-ssh-key.pem"
             key_path.write_text(str(ssh_key), encoding="utf-8")
             key_path.chmod(0o600)
-    default_key = data.get("cb_default_openssh_private_key", {}).get("value")
+    default_entry = data.get("cb_default_ssh_private_key") or data.get(
+        "cb_default_openssh_private_key"
+    )
+    default_key = (default_entry or {}).get("value")
     if default_key and default_key != "null":
         key_path = work_dir / "default-ssh-key.pem"
         key_path.write_text(str(default_key), encoding="utf-8")
@@ -151,6 +147,7 @@ def terraform_destroy(
         work_dir=work_dir,
         environ=environ,
         log_path=apply_log,
+        console_filter=compose_filters(),
     )
     output_path = work_dir / "output.json"
     if output_path.exists():

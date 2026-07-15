@@ -21,6 +21,8 @@ from vpn_node_builder.commands._context import (
 )
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
+from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
+from vpn_node_builder.ui import print_cli_error
 
 console = Console()
 
@@ -56,8 +58,14 @@ def _download(
 
 
 def download_vpn_config(
-    node_type: str = typer.Argument(..., help="Node type / recipe family"),
-    cloud: str = typer.Argument(..., help="Cloud target"),
+    node_type: str = typer.Argument(
+        PLACEHOLDER_NODE_TYPE,
+        help="Node type / recipe family (lists available types if omitted)",
+    ),
+    cloud: str = typer.Argument(
+        PLACEHOLDER_CLOUD,
+        help="Cloud target (lists targets if omitted)",
+    ),
     region: str | None = typer.Option(
         None,
         "-r",
@@ -65,13 +73,13 @@ def download_vpn_config(
         help="The region of the server from which the configuration should be downloaded",
     ),
     user: str = typer.Option(
-        ...,
+        "",
         "-u",
         "--user",
         help="The name of the VPN user whose client configuration should be downloaded",
     ),
     password: str = typer.Option(
-        ...,
+        "",
         "-p",
         "--password",
         help="The password of the VPN user",
@@ -86,14 +94,19 @@ def download_vpn_config(
     """Download the VPN client configuration from a bastion node in a given region."""
     set_debug(debug)
     try:
+        # Resolve NODE_TYPE/CLOUD first (bash lists options before -u/-p checks).
+        ctx = prepare_command_context()
+        validated, run_dir = resolve_deployment(
+            ctx,
+            node_type=node_type,
+            cloud=cloud,
+            region=region,
+            command="download_vpn_config",
+        )
         if not user or not password:
             raise VpnNodeBuilderError(
                 "The user name and password of the VPN user cannot be empty."
             )
-        ctx = prepare_command_context()
-        validated, run_dir = resolve_deployment(
-            ctx, node_type=node_type, cloud=cloud, region=region
-        )
         require_run_dir(run_dir)
         output_path = run_dir / "output.json"
         if not output_path.is_file():
@@ -235,5 +248,5 @@ def download_vpn_config(
                 f"Download manually from https://{host}/static/~{user}"
             )
     except VpnNodeBuilderError as exc:
-        console.print(f"[red]ERROR![/red] {exc}")
+        print_cli_error(exc)
         raise typer.Exit(code=1) from exc

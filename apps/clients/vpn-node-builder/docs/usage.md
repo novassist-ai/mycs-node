@@ -87,11 +87,13 @@ vpnb deploy-node sandbox aws -r us-east-1
 vpnb deploy-node sandbox vagrant-vbox
 vpnb deploy-node sandbox aws -r us-east-1 -s    # plan only
 vpnb deploy-node sandbox aws -r us-east-1 -u    # upgrade/rebuild bastion
+vpnb deploy-node            # lists available NODE_TYPE values
+vpnb deploy-node sandbox    # lists available CLOUD targets for that type
 ```
 
 | Option | Meaning |
 |--------|---------|
-| `-r/--region` | Required for aws / azure / google |
+| `-r/--region` | Required for aws / azure / google (lists regions if omitted) |
 | `-c/--clean` | Remove `.terraform*` then init |
 | `-i/--init` | Force Terraform init |
 | `-u/--upgrade` | Taint bastion resources before apply |
