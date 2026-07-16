@@ -132,7 +132,7 @@ vpnb destroy-node sandbox aws -r us-east-1 -x   # also delete remote state stora
 | Option | Meaning |
 |--------|---------|
 | `-r/--region` | Required for aws / azure / google |
-| `-x/--delete-remote-state` | After destroy, delete s3/gcs state bucket `{TF_VAR_name}-vpn-tfstate-{region}`, or the Azure storage container named `TF_VAR_name` |
+| `-x/--delete-remote-state` | After destroy, delete s3/gcs state bucket `{TF_VAR_name}-vpnb-tfstate-{region}`, or the Azure storage container named `TF_VAR_name` |
 | `-d/--debug` | Trace external commands |
 
 **Caution:** the s3/gcs bucket is shared by all node types for the same deployment name and region; `-x` removes the whole bucket.

@@ -9,7 +9,7 @@ created by `ensure_backend_resources()`:
 
 | Backend | Deleted |
 |---------|---------|
-| `s3` / `gcs` | Bucket `{TF_VAR_name}-vpn-tfstate-{region}` (force) |
+| `s3` / `gcs` | Bucket `{TF_VAR_name}-vpnb-tfstate-{region}` (force) |
 | `azurerm` | Container named `TF_VAR_name` (account / RG kept) |
 
 ## Console output filters
