@@ -79,7 +79,7 @@ module "bootstrap" {
   bastion_instance_type = var.bastion_instance_type
 
   bastion_image_name  = var.bastion_image_name
-  bastion_image_owner = "244289018343"
+  bastion_image_owner = var.bastion_image_owner
 
   # Issue certificates from letsencrypt.org
   certify_bastion = var.certify_bastion

@@ -27,12 +27,20 @@ version=${positional[2]:-dev}
 script_dir=$(cd "$(dirname "$0")" && pwd)
 root_dir=$(cd "${script_dir}/../../../.." && pwd)
 
+# Publisher locators for sandbox recipes (required TF_VAR_* with no Terraform default).
+# AWS dev vs prod accounts differ; GCS/Azure prefixes currently match publish scripts.
+BASTION_IMAGE_BUCKET_PREFIX=${BASTION_IMAGE_BUCKET_PREFIX:-mycsimages}
+BASTION_IMAGE_STORAGE_ACCOUNT_PREFIX=${BASTION_IMAGE_STORAGE_ACCOUNT_PREFIX:-mycs}
+BASTION_IMAGE_CONTAINER=${BASTION_IMAGE_CONTAINER:-nodeimage}
+
 if [[ "${env}" == "prod" ]]; then
   bastion_image=$("${script_dir}/get-cloud-image.sh" prod)
   version=${VERSION:-${tag}}
+  bastion_image_owner=${BASTION_IMAGE_OWNER:-975050267636}
 else
   bastion_image=$("${script_dir}/get-cloud-image.sh" dev)
   version=dev
+  bastion_image_owner=${BASTION_IMAGE_OWNER:-244289018343}
 fi
 
 # Local builds use the same GHCR repository name end users pull via brew.
@@ -43,7 +51,7 @@ if [[ "${clean}" -eq 1 ]]; then
   echo "Clean rebuild (no cache, pull base image)"
 fi
 
-echo "Building ${image} (env=${env}, bastion=${bastion_image})..."
+echo "Building ${image} (env=${env}, bastion=${bastion_image}, owner=${bastion_image_owner})..."
 
 # With `set -u`, an empty array expands as unbound; guard with ${arr[@]+...}.
 docker build ${build_opts[@]+"${build_opts[@]}"} \
@@ -51,6 +59,10 @@ docker build ${build_opts[@]+"${build_opts[@]}"} \
   --build-arg "env=${env}" \
   --build-arg "version=${version}" \
   --build-arg "bastion_image_name=${bastion_image}" \
+  --build-arg "bastion_image_owner=${bastion_image_owner}" \
+  --build-arg "bastion_image_bucket_prefix=${BASTION_IMAGE_BUCKET_PREFIX}" \
+  --build-arg "bastion_image_storage_account_prefix=${BASTION_IMAGE_STORAGE_ACCOUNT_PREFIX}" \
+  --build-arg "bastion_image_container=${BASTION_IMAGE_CONTAINER}" \
   -t "${image}" \
   "${root_dir}"
 

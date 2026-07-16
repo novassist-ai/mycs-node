@@ -59,6 +59,20 @@ variable "bastion_instance_type" {
   default = "Standard_B1s"
 }
 
+# Azure storage account prefix and container for published bastion VHDs.
+# Set via TF_VAR_bastion_image_storage_account_prefix /
+# TF_VAR_bastion_image_container (baked into vpn-node-builder images).
+#
+variable "bastion_image_storage_account_prefix" {
+  description = "Azure storage account name prefix for the published MyCS bastion VHD."
+  type        = string
+}
+
+variable "bastion_image_container" {
+  description = "Azure blob container that holds the published MyCS bastion VHD."
+  type        = string
+}
+
 # The MyCS api service port
 #
 # @order: 201

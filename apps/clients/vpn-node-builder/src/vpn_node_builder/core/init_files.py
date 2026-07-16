@@ -57,9 +57,18 @@ export TF_VAR_vpn_type=ipsec
 export TF_VAR_vpn_users="user1|password1,user2|password2"
 
 # Bastion appliance image (public cloud sandbox recipes).
-# Docker image `novassist/vpn-node-builder` sets TF_VAR_bastion_image_name at build time.
+# Docker image `novassist/vpn-node-builder` sets these at build time:
+#   TF_VAR_bastion_image_name
+#   TF_VAR_bastion_image_owner                  (AWS AMI account)
+#   TF_VAR_bastion_image_bucket_prefix          (GCP GCS prefix)
+#   TF_VAR_bastion_image_storage_account_prefix (Azure SA prefix)
+#   TF_VAR_bastion_image_container              (Azure blob container)
 # Override here for native development, e.g.:
 #export TF_VAR_bastion_image_name=mycs-node-image_dev
+#export TF_VAR_bastion_image_owner=244289018343
+#export TF_VAR_bastion_image_bucket_prefix=mycsimages
+#export TF_VAR_bastion_image_storage_account_prefix=mycs
+#export TF_VAR_bastion_image_container=nodeimage
 """
 
 

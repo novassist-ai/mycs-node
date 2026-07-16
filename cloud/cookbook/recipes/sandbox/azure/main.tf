@@ -77,8 +77,10 @@ module "bootstrap" {
 
   bastion_instance_type = var.bastion_instance_type
 
-  bastion_use_managed_image = false
-  bastion_image_name        = var.bastion_image_name
+  bastion_use_managed_image            = false
+  bastion_image_name                   = var.bastion_image_name
+  bastion_image_storage_account_prefix = var.bastion_image_storage_account_prefix
+  bastion_image_container              = var.bastion_image_container
 
   # Issue certificates from letsencrypt.org
   certify_bastion = var.certify_bastion

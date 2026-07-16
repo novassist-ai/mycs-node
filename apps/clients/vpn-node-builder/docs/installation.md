@@ -90,7 +90,7 @@ docker run --privileged --rm -it \
 
 ## Bastion image version
 
-The image is built with a default `TF_VAR_bastion_image_name`:
+The image is built with a default `TF_VAR_bastion_image_name` and cloud-specific publisher locators:
 
 | Build env | Bastion image name |
 |-----------|-------------------|
@@ -98,8 +98,16 @@ The image is built with a default `TF_VAR_bastion_image_name`:
 | **CI (`ci` / Actions)** | Latest `mycs-node-image_X.Y.Z-devN` AMI, or the name passed from the bastion workflow |
 | **prod** | Latest `mycs-node-image_X.Y.Z` AMI (resolved at image build via AWS) |
 
+| Locator | dev Docker | prod Docker |
+|---------|------------|-------------|
+| `TF_VAR_bastion_image_owner` (AWS) | `244289018343` | `975050267636` |
+| `TF_VAR_bastion_image_bucket_prefix` (GCP) | `mycsimages` | `mycsimages` |
+| `TF_VAR_bastion_image_storage_account_prefix` (Azure) | `mycs` | `mycs` |
+| `TF_VAR_bastion_image_container` (Azure) | `nodeimage` | `nodeimage` |
+
+
 No `appbricks-*` image names are used. Top-level ``vpnb --help`` shows the
-bastion image name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`).
+bastion image name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`), plus publisher locators (`TF_VAR_bastion_image_owner`, GCS/Azure prefixes).
 
 On AWS the name is a **glob** (`*` / `?`), not a regex — e.g.
 `mycs-node-image_0.1.0-dev*` matches `mycs-node-image_0.1.0-dev0`. A regex-style
@@ -114,6 +122,12 @@ To override for deployments, set in `build-vars.sh`:
 
 ```bash
 export TF_VAR_bastion_image_name=mycs-node-image_0.1.0-dev*
+# AWS AMI owner (dev vs prod accounts differ)
+export TF_VAR_bastion_image_owner=244289018343
+# Google / Azure publisher locators (usually unchanged)
+export TF_VAR_bastion_image_bucket_prefix=mycsimages
+export TF_VAR_bastion_image_storage_account_prefix=mycs
+export TF_VAR_bastion_image_container=nodeimage
 ```
 
 ## Build the image locally
