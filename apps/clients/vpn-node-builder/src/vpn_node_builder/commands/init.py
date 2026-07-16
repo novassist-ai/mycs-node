@@ -28,9 +28,9 @@ def init_cmd() -> None:
 
     console.print("\n[green]Creating control files in current folder...[/green]")
     for name in result.created:
-        console.print(f"  [green]created[/green]  {result.working_dir / name}")
+        console.print(f"  [green]created[/green]  {name}")
     for name in result.skipped:
-        console.print(f"  [dim]skipped[/dim]  {result.working_dir / name} (already exists)")
+        console.print(f"  [dim]skipped[/dim]  {name} (already exists)")
 
     if not result.created:
         console.print(

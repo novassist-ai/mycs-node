@@ -30,11 +30,18 @@ Tap: [`novassist-ai/homebrew-tap`](https://github.com/novassist-ai/homebrew-tap)
 
 ```bash
 brew tap novassist-ai/tap
-brew install --HEAD vpn-node-builder
+brew install vpn-node-builder
 
+vpnb --help              # auto-pulls :latest if missing locally
 vpnb-dev --help          # auto-pulls :dev if missing locally
+vpnb update              # force re-download :latest
 vpnb-dev update          # force re-download :dev
-vpnb --help              # prod :latest (once published)
+```
+
+Optional tip install of the launcher from the `dev` branch:
+
+```bash
+brew install --HEAD vpn-node-builder
 ```
 
 Host launcher helpers (not Typer commands):
@@ -47,10 +54,16 @@ Host launcher helpers (not Typer commands):
 
 The formula installs the launcher as **`vpnb`** and a symlink **`vpnb-dev`**. It does
 **not** install Python, Terraform, or cloud CLIs on the host — those run inside
-the container.
+the container. The stable formula tracks the `vpnb_X.Y.Z` git tag (launcher
+script); Docker images are still pulled as `:latest` / `:dev` (or a pin via
+`VPNB_IMAGE`).
 
-Stable (versioned) formula installs will ship when Phase 7 publishes launcher
-release assets and bumps the tap SHA; until then use `--HEAD`.
+After each successful **prod** vpn-node-builder build, CI bumps
+[`novassist-ai/homebrew-tap`](https://github.com/novassist-ai/homebrew-tap)
+(`Formula/vpn-node-builder.rb`) via `cicd/scripts/bump-homebrew-vpn-node-builder.sh`.
+That requires the `HOMEBREW_TAP_TOKEN` secret on `mycs-node` (PAT with
+`contents:write` on the tap). Dig builds do **not** bump the formula — refresh
+the dig image with `vpnb-dev update`.
 
 ## Windows (release zip)
 
@@ -85,11 +98,12 @@ The image is built with a default `TF_VAR_bastion_image_name`:
 | **CI (`ci` / Actions)** | Latest `mycs-node-image_X.Y.Z-devN` AMI, or the name passed from the bastion workflow |
 | **prod** | Latest `mycs-node-image_X.Y.Z` AMI (resolved at image build via AWS) |
 
-No `appbricks-*` image names are used. To override for a single **native**
-deploy, set in `build-vars.sh`:
+No `appbricks-*` image names are used. Top-level ``vpnb --help`` shows the
+bastion image name baked into the CLI/image (`TF_VAR_bastion_image_name`). To
+override for deployments, set in `build-vars.sh`:
 
 ```bash
-export TF_VAR_bastion_image_name=mycs-bastion_dev
+export TF_VAR_bastion_image_name=mycs-node-image_dev
 ```
 
 ## Build the image locally

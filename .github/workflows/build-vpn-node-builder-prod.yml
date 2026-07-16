@@ -185,3 +185,73 @@ jobs:
           release_tag=${{ needs.create-release-tag.outputs.release_tag }}
           git tag -a "${release_tag}" -m "vpn-node-builder prod release ${release_tag}: last commit => ${last_commit_msg}"
           git push origin "refs/tags/${release_tag}"
+
+  # Bump stable Homebrew formula in novassist-ai/homebrew-tap after vpnb_X.Y.Z is published.
+  # Requires repo secret HOMEBREW_TAP_TOKEN (PAT with contents:write on the tap).
+  # Note: `secrets` cannot be referenced in job-level `if`; gate on the token in a step.
+  bump-homebrew-formula:
+    needs:
+      - create-release-tag
+      - tag_prod_build
+    if: github.ref == 'refs/heads/main' && needs.tag_prod_build.result == 'success'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Require HOMEBREW_TAP_TOKEN
+        id: gate
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN not set; skipping Homebrew formula bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout mycs-node
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Checkout homebrew-tap
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: novassist-ai/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Bump vpn-node-builder formula
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          RELEASE_TAG: ${{ needs.create-release-tag.outputs.release_tag }}
+        run: |
+          cicd/scripts/bump-homebrew-vpn-node-builder.sh \
+            -t "${RELEASE_TAG}" \
+            -d homebrew-tap \
+            -r "${{ github.repository }}"
+
+      - name: Commit and push tap
+        if: steps.gate.outputs.skip != 'true'
+        working-directory: homebrew-tap
+        env:
+          RELEASE_TAG: ${{ needs.create-release-tag.outputs.release_tag }}
+          VERSION: ${{ needs.create-release-tag.outputs.version }}
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/vpn-node-builder.rb
+          if git diff --staged --quiet; then
+            echo "Formula already at ${RELEASE_TAG}; nothing to commit."
+            exit 0
+          fi
+          git commit -m "vpn-node-builder ${VERSION}
+
+          Bump stable formula to ${RELEASE_TAG} (launcher tarball).
+          Docker channels remain :latest / :dev.
+          "
+          git push origin HEAD:main

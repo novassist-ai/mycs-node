@@ -1,6 +1,6 @@
 # Bastion Automation Appliance
 
-Templates and build tooling for a secured bastion appliance used to automate cloud deployments. Images are built with [Packer](https://www.packer.io/) and configured at first boot by bootstrap scripts baked into the image. Terraform modules in [`cloud-inceptor`](https://github.com/novassist-ai/mycs-node.git/cloud) deploy instances from these images and supply runtime configuration via cloud-init.
+Templates and build tooling for a secured bastion appliance used to automate cloud deployments. Images are built with [Packer](https://www.packer.io/) and configured at first boot by bootstrap scripts baked into the image. Terraform modules in [`cloud/`](../cloud/) deploy instances from these images and supply runtime configuration via cloud-init.
 
 The appliance provides secure VPC access (OpenVPN, WireGuard, or IPsec), optional HTTP proxying, internal DNS, SMTP relay, Docker workloads, optional site-to-site VPN gateway peering, and the MyCloudSpace node control plane (Tailscale/Headscale mesh, API, and automation hooks).
 
@@ -34,12 +34,12 @@ This repository produces a **base machine image** — not a running service. The
 2. **Bootstrap scripts** under `/usr/local/lib/cloud-inceptor/` that configure services on first boot from `/etc/mycs/config.yml`.
 3. **Static web assets** under `/var/www/html/` (VPN client installers, directory listings, error pages).
 
-Deployment is handled by `cloud-inceptor` Terraform, which selects the cloud image, injects `bastion-config.yml`, TLS material, SSH keys, and triggers `init_instance` on first boot.
+Deployment is handled by Terraform under [`cloud/`](../cloud/), which selects the cloud image, injects `bastion-config.yml`, TLS material, SSH keys, and triggers `init_instance` on first boot.
 
 ```mermaid
 flowchart LR
   BUILD[mycs-node/image<br/>Packer build] --> AMI[Cloud image]
-  TF[cloud-inceptor Terraform] --> AMI
+  TF[cloud/ Terraform] --> AMI
   TF --> CI[cloud-init user-data]
   CI --> INIT[init_instance]
   INIT --> SVC[configure_* services]
@@ -197,7 +197,7 @@ Mount the repo and run `./build/build-*-image.sh` inside the container. See [doc
 
 ## Runtime Configuration
 
-Runtime configuration is **not** baked into the image. Terraform in `cloud-inceptor` (`modules/bastion-config/bastion.tf`) generates `config.yml` and delivers it as `/usr/local/etc/bastion-config.yml` via cloud-init. `init_instance` moves it to `/etc/mycs/config.yml`.
+Runtime configuration is **not** baked into the image. Terraform in [`cloud/modules/bastion-config/bastion.tf`](../cloud/modules/bastion-config/bastion.tf) generates `config.yml` and delivers it as `/usr/local/etc/bastion-config.yml` via cloud-init. `init_instance` moves it to `/etc/mycs/config.yml`.
 
 | Section | Configures |
 |---------|------------|
