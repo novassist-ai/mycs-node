@@ -18,7 +18,8 @@ VPN client config and optional traffic-masking tunnels.
 `vpnb-dev`, Windows `vpnb*.cmd` / `vpnb*.ps1`), `build-docker.sh`, Homebrew formula
 `vpn-node-builder` (`vpnb` → GHCR `:latest`, `vpnb-dev` → `:dev`). CI workflows
 `build-vpn-node-builder-dev.yml` / `build-vpn-node-builder-prod.yml` (git tags `vpnb_*`;
-GHCR tags unprefixed `:dev` / `:latest` / `:X.Y.Z[-devN]`). Stable formula bumps are Phase 7.
+GHCR tags unprefixed `:dev` / `:latest` / `:X.Y.Z[-devN]`). Homebrew:
+`brew install novassist-ai/tap/vpn-node-builder` (stable launcher from `vpnb_*` tag).
 
 ## Documentation
 
