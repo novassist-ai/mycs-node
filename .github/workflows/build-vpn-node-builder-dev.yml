@@ -178,6 +178,10 @@ jobs:
             env=dev
             version=${{ steps.meta.outputs.version }}
             bastion_image_name=${{ steps.bastion.outputs.name }}
+            bastion_image_owner=244289018343
+            bastion_image_bucket_prefix=mycsimages
+            bastion_image_storage_account_prefix=mycs
+            bastion_image_container=nodeimage
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.description=MyCS vpn-node-builder CLI (dev)

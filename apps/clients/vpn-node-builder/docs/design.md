@@ -101,14 +101,22 @@ found, it creates `.workspace` in the cwd.
 Interactive acceptance once per workspace. Skip only with `VPNB_SKIP_EULA=1`
 (tests/CI).
 
-## Bastion image (`TF_VAR_bastion_image_name`)
+## Bastion image (`TF_VAR_bastion_image_name` + publisher locators)
 
-Sandbox public-cloud recipes require `var.bastion_image_name` (no default).
+Sandbox public-cloud recipes require `var.bastion_image_name` (common input; no
+default) plus a cloud-specific publisher locator (no Terraform default):
+
+| Cloud | Variable | Meaning |
+|-------|----------|---------|
+| AWS | `bastion_image_owner` | AMI owner account ID |
+| Google | `bastion_image_bucket_prefix` | GCS bucket prefix (`${prefix}_${region}/…`) |
+| Azure | `bastion_image_storage_account_prefix`, `bastion_image_container` | VHD blob location |
+| OpenStack/OVH | *(none)* | Glance match by image name/regex only |
 
 | Source | Value |
 |--------|--------|
-| Docker image build (dev) | Latest `mycs-node-image_X.Y.Z-devN` from bastion workflow / `get-cloud-image.sh ci` |
-| Docker image build (prod) | Latest `mycs-node-image_X.Y.Z` from `scripts/get-cloud-image.sh prod` |
+| Docker image build (dev) | Latest `mycs-node-image_X.Y.Z-devN` + dev publisher locators |
+| Docker image build (prod) | Latest `mycs-node-image_X.Y.Z` + prod publisher locators |
 | Native dev | Set in `build-vars.sh` or export before `vpnb deploy-node` |
 
 Naming uses `mycs-node-image_*` only — no `appbricks-*` AMI lookups.

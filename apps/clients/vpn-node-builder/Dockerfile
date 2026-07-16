@@ -5,6 +5,10 @@
 #     --build-arg env=dev \
 #     --build-arg version=dev \
 #     --build-arg bastion_image_name=mycs-node-image_dev \
+#     --build-arg bastion_image_owner=244289018343 \
+#     --build-arg bastion_image_bucket_prefix=mycsimages \
+#     --build-arg bastion_image_storage_account_prefix=mycs \
+#     --build-arg bastion_image_container=nodeimage \
 #     -t ghcr.io/novassist-ai/vpn-node-builder:dev .
 
 FROM python:3.12-slim-bookworm
@@ -12,10 +16,19 @@ FROM python:3.12-slim-bookworm
 ARG env=dev
 ARG version=dev
 ARG bastion_image_name=mycs-node-image_dev
+# Publisher locators (cloud-specific; dev vs prod accounts may differ).
+ARG bastion_image_owner=244289018343
+ARG bastion_image_bucket_prefix=mycsimages
+ARG bastion_image_storage_account_prefix=mycs
+ARG bastion_image_container=nodeimage
 
 ENV env=${env}
 ENV version=${version}
 ENV TF_VAR_bastion_image_name=${bastion_image_name}
+ENV TF_VAR_bastion_image_owner=${bastion_image_owner}
+ENV TF_VAR_bastion_image_bucket_prefix=${bastion_image_bucket_prefix}
+ENV TF_VAR_bastion_image_storage_account_prefix=${bastion_image_storage_account_prefix}
+ENV TF_VAR_bastion_image_container=${bastion_image_container}
 ENV VPNB_COOKBOOK_PATH=/usr/local/lib/vpn-node-builder/cloud/cookbook
 ENV PATH="/usr/local/lib/vpn-node-builder/.build/bin:${PATH}"
 

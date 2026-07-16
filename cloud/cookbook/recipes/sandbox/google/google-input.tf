@@ -57,6 +57,15 @@ variable "bastion_instance_type" {
   default = "n1-standard-1"
 }
 
+# GCS bucket prefix for published bastion image tarballs
+# (${prefix}_${region}/appbricks-bastion/...). Set via
+# TF_VAR_bastion_image_bucket_prefix (baked into vpn-node-builder images).
+#
+variable "bastion_image_bucket_prefix" {
+  description = "GCS bucket name prefix for the published MyCS bastion image."
+  type        = string
+}
+
 # The MyCS api service port
 #
 # @order: 201

@@ -46,6 +46,14 @@ variable "bastion_instance_type" {
   default = "t4g.small"
 }
 
+# AWS account that publishes the public bastion AMI (dev vs prod differ).
+# Set via TF_VAR_bastion_image_owner (baked into vpn-node-builder images).
+#
+variable "bastion_image_owner" {
+  description = "AWS account ID that owns the MyCS bastion AMI."
+  type        = string
+}
+
 # The MyCS api service port
 #
 # @order: 201

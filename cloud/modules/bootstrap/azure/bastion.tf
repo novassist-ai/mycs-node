@@ -65,12 +65,31 @@ resource "azurerm_virtual_machine_data_disk_attachment" "bastion-data" {
 #
 # Image
 #
+# Managed-image lookup supports wildcards (* or .*) and picks the
+# lexicographically last match (sort_descending), which for …-devN suffixes
+# prefers the highest N among same-length versions.
+#
+
+locals {
+  bastion_image_wildcard = "__W__"
+  bastion_image_pattern = replace(
+    replace(var.bastion_image_name, ".*", local.bastion_image_wildcard),
+    "*",
+    local.bastion_image_wildcard,
+  )
+  bastion_image_name_regex = "^${replace(
+    replace(replace(local.bastion_image_pattern, ".", "\\."), "+", "\\+"),
+    local.bastion_image_wildcard,
+    ".*",
+  )}_${var.region}$"
+}
 
 # Lookup managed image in source resource group
 data "azurerm_image" "bastion" {
   count = var.bastion_use_managed_image ? 1 : 0
 
-  name                = "${var.bastion_image_name}_${var.region}"
+  name_regex          = local.bastion_image_name_regex
+  sort_descending     = true
   resource_group_name = data.azurerm_resource_group.source.name
 }
 

@@ -116,15 +116,19 @@ git tag `vpnb_X.Y.Z`). PRs to `dev` build and smoke only (no push / no git tag).
 ```bash
 cd /path/to/a-project-dir
 export VPNB_COOKBOOK_PATH=/path/to/mycs-node/cloud/cookbook
-export TF_VAR_bastion_image_name=mycs-bastion_dev   # required for native deploy
+export TF_VAR_bastion_image_name=mycs-node-image_dev
+export TF_VAR_bastion_image_owner=244289018343
+export TF_VAR_bastion_image_bucket_prefix=mycsimages
+export TF_VAR_bastion_image_storage_account_prefix=mycs
+export TF_VAR_bastion_image_container=nodeimage
 vpnb init
 vpnb doctor
 vpnb deploy-node sandbox aws -r us-east-1 -s
 ```
 
 Inside the `mycs-node` tree, cookbook discovery usually works without
-`VPNB_COOKBOOK_PATH`. The Docker image sets `TF_VAR_bastion_image_name` at build
-time; native runs need it in `build-vars.sh` or the environment.
+`VPNB_COOKBOOK_PATH`. The Docker image sets bastion `TF_VAR_*` publisher values at build
+time; native runs need them in `build-vars.sh` or the environment.
 
 ---
 
@@ -134,7 +138,11 @@ time; native runs need it in `build-vars.sh` or the environment.
 |----------|---------|
 | `VPNB_COOKBOOK_PATH` | Cookbook root |
 | `VPNB_SKIP_EULA` | Skip EULA (tests/CI only) |
-| `TF_VAR_bastion_image_name` | Bastion AMI/box (`mycs-bastion_*`) |
+| `TF_VAR_bastion_image_name` | Bastion image name/pattern (`mycs-node-image_*`) |
+| `TF_VAR_bastion_image_owner` | AWS AMI owner account |
+| `TF_VAR_bastion_image_bucket_prefix` | GCP GCS bucket prefix |
+| `TF_VAR_bastion_image_storage_account_prefix` | Azure storage account prefix |
+| `TF_VAR_bastion_image_container` | Azure VHD container |
 | `VPNB_IMAGE` / `VPN_NODE_BUILDER_IMAGE` | Full image ref (overrides `vpnb` / `vpnb-dev` defaults) |
 | `VPNB_REGISTRY_IMAGE` | Registry repo without tag (default `ghcr.io/novassist-ai/vpn-node-builder`) |
 | `EXT_COOKBOOK_PATH` | External cookbooks root |

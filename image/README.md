@@ -162,7 +162,7 @@ source "$OS_OPENRC_FILE"
 | Workflow | Trigger | What it builds |
 |----------|---------|----------------|
 | [`build-image-dev.yml`](../.github/workflows/build-image-dev.yml) | Push to `dev` (paths under `image/`) or manual | AWS AMI `mycs-node-image_X.Y.Z-devN` via `generate-version.sh`; git tag after publish; triggers vpn-node-builder |
-| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Git tag/AMI `mycs-node-image_X.Y.Z` from latest dig line via `generate-version.sh`; `IS_DEV_BUILD=no`; triggers vpn-node-builder |
+| [`build-image-prod.yml`](../.github/workflows/build-image-prod.yml) | Push to `main` or manual | Git tag/AMI `mycs-node-image_X.Y.Z` from latest dev line via `generate-version.sh`; `IS_DEV_BUILD=no`; triggers vpn-node-builder |
 
 Local CLI builds may use a fixed `mycs-node-image_dev` name (`DEV_BUILD=dev`). GitHub Actions **dev** builds use semver-dev tags (e.g. `mycs-node-image_0.0.0-dev1`).
 
