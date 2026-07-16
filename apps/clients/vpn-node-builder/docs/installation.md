@@ -99,11 +99,16 @@ The image is built with a default `TF_VAR_bastion_image_name`:
 | **prod** | Latest `mycs-node-image_X.Y.Z` AMI (resolved at image build via AWS) |
 
 No `appbricks-*` image names are used. Top-level ``vpnb --help`` shows the
-bastion image name baked into the CLI/image (`TF_VAR_bastion_image_name`). To
-override for deployments, set in `build-vars.sh`:
+bastion image name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`).
+
+On AWS the name is a **glob** (`*` / `?`), not a regex — e.g.
+`mycs-node-image_0.1.0-dev*` matches `mycs-node-image_0.1.0-dev0`. A regex-style
+`.*` is also accepted and treated as `*`.
+
+To override for deployments, set in `build-vars.sh`:
 
 ```bash
-export TF_VAR_bastion_image_name=mycs-node-image_dev
+export TF_VAR_bastion_image_name=mycs-node-image_0.1.0-dev*
 ```
 
 ## Build the image locally

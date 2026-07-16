@@ -61,13 +61,20 @@ resource "aws_network_interface_attachment" "bastion-admin" {
 #
 # AMI
 #
+# Name filter is an AWS glob (* and ?), not a regex. Accept a common regex-style
+# ".*" suffix as "*" so values like mycs-node-image_0.1.0-dev.* match …-dev0.
+#
+
+locals {
+  bastion_image_name_glob = replace(var.bastion_image_name, ".*", "*")
+}
 
 data "aws_ami" "bastion" {
   most_recent = true
 
   filter {
     name   = "name"
-    values = [var.bastion_image_name]
+    values = [local.bastion_image_name_glob]
   }
 
   filter {
