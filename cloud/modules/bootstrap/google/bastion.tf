@@ -81,12 +81,34 @@ resource "google_compute_disk" "bastion-data" {
 #
 # Image
 #
+# Project image lookup supports wildcards (* or .*). GCP image names use
+# hyphens (mycs-node-image-0-1-0-dev0); convert from the AWS-style
+# mycs-node-image_0.1.0-dev* form before matching. most_recent picks by
+# creation time when multiple images match.
+#
+
+locals {
+  bastion_image_wildcard = "__W__"
+  bastion_image_pattern = replace(
+    replace(var.bastion_image_name, ".*", local.bastion_image_wildcard),
+    "*",
+    local.bastion_image_wildcard,
+  )
+  # mycs-node-image_0.1.0-dev* → mycs-node-image-0-1-0-dev*
+  bastion_image_gcp_pattern = replace(
+    replace(local.bastion_image_pattern, "mycs-node-image_", "mycs-node-image-"),
+    ".",
+    "-",
+  )
+  bastion_image_gcp_regex = replace(local.bastion_image_gcp_pattern, local.bastion_image_wildcard, ".*")
+}
 
 # Lookup image in current project's image repository
 data "google_compute_image" "bastion" {
   count = var.bastion_use_project_image ? 1 : 0
 
-  name = var.bastion_image_name
+  filter      = "name~'${local.bastion_image_gcp_regex}'"
+  most_recent = true
 }
 
 # Create image using the given url

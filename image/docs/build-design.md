@@ -251,16 +251,17 @@ Log files: `build-{cloud}-{region}.log` in the directory where the build script 
 **Dev workflow:**
 
 1. Runs `cicd/scripts/generate-version.sh` → tag/AMI `mycs-node-image_X.Y.Z-devN`.
-2. Builds in `us-east-1`, publishes to additional AWS regions.
-3. Pushes the git tag after a successful build.
-4. Dispatches `build-vpn-node-builder-dev.yml` with that bastion image name.
+2. Deletes prior dev AMIs (`mycs-node-image_*-dev*`) in the build/publish regions.
+3. Builds in `us-east-1`, publishes to additional AWS regions.
+4. Pushes the git tag after a successful build.
+5. Dispatches `build-vpn-node-builder-dev.yml` with that bastion image name.
 
 Local CLI may build a fixed `mycs-node-image_dev`; Actions uses semver-dev tags.
 
 **Prod workflow:**
 
 1. Runs `cicd/scripts/generate-version.sh` on `main` → tag/AMI `mycs-node-image_X.Y.Z`
-   (derived from the latest dig tag `…-devN`, or from a patch line when applicable).
+   (derived from the latest dev tag `…-devN`, or from a patch line when applicable).
 2. Sets `IS_DEV_BUILD=no` and downloads mycs-node from `novassist-ai/mycs-node` releases.
 3. Builds and publishes the AWS AMI, then pushes the git tag after success.
 4. Dispatches `build-vpn-node-builder-prod.yml` with that image name.

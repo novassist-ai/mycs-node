@@ -62,8 +62,8 @@ After each successful **prod** vpn-node-builder build, CI bumps
 [`novassist-ai/homebrew-tap`](https://github.com/novassist-ai/homebrew-tap)
 (`Formula/vpn-node-builder.rb`) via `cicd/scripts/bump-homebrew-vpn-node-builder.sh`.
 That requires the `HOMEBREW_TAP_TOKEN` secret on `mycs-node` (PAT with
-`contents:write` on the tap). Dig builds do **not** bump the formula — refresh
-the dig image with `vpnb-dev update`.
+`contents:write` on the tap). Dev builds do **not** bump the formula — refresh
+the dev image with `vpnb-dev update`.
 
 ## Windows (release zip)
 
@@ -103,7 +103,12 @@ bastion image name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`
 
 On AWS the name is a **glob** (`*` / `?`), not a regex — e.g.
 `mycs-node-image_0.1.0-dev*` matches `mycs-node-image_0.1.0-dev0`. A regex-style
-`.*` is also accepted and treated as `*`.
+`.*` is also accepted and treated as `*`. Multiple matches use the most recent AMI.
+
+Azure managed-image lookup uses the same wildcards (plus `_${region}` suffix) and
+picks the lexicographically last name. Google project images use the same
+wildcards after converting to GCP naming (`mycs-node-image-0-1-0-dev*`) and
+`most_recent` by creation time.
 
 To override for deployments, set in `build-vars.sh`:
 

@@ -94,6 +94,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Delete prior dev AMIs
+        run: |
+          # AWS AMI name filter is a glob → mycs-node-image_*-dev*
+          build/delete-aws-images.sh '*-dev*' "all"
+
       - name: Run build
         run: |
           build/build-aws-image.sh us-east-1 "$DEV_BUILD"
