@@ -26,7 +26,7 @@ def test_build_backend_config_s3() -> None:
     cfg = build_backend_config(
         "s3", node_type="sandbox", region="us-east-1", environ=env
     )
-    assert "bucket=demo-vpn-tfstate-us-east-1" in cfg.args[1]
+    assert "bucket=demo-vpnb-tfstate-us-east-1" in cfg.args[1]
 
 
 def test_build_backend_config_local() -> None:
@@ -72,7 +72,7 @@ def test_delete_backend_resources_s3(monkeypatch) -> None:
             return CommandResult(
                 args=tuple(args),
                 returncode=0,
-                stdout="2024-01-01 00:00:00 demo-vpn-tfstate-us-east-1\n",
+                stdout="2024-01-01 00:00:00 demo-vpnb-tfstate-us-east-1\n",
                 stderr="",
             )
         return CommandResult(args=tuple(args), returncode=0, stdout="", stderr="")
@@ -88,8 +88,8 @@ def test_delete_backend_resources_s3(monkeypatch) -> None:
     deleted = delete_backend_resources(
         "s3", region="us-east-1", environ=env, session=session
     )
-    assert deleted == "s3://demo-vpn-tfstate-us-east-1"
-    assert ("aws", "s3", "rb", "s3://demo-vpn-tfstate-us-east-1", "--force") in calls
+    assert deleted == "s3://demo-vpnb-tfstate-us-east-1"
+    assert ("aws", "s3", "rb", "s3://demo-vpnb-tfstate-us-east-1", "--force") in calls
 
 
 def test_delete_backend_resources_local_is_noop(monkeypatch) -> None:

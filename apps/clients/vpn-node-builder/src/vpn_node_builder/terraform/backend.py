@@ -27,7 +27,7 @@ def _deployment_name(environ: MutableMapping[str, str]) -> str:
 
 
 def state_bucket_name(name: str, region: str) -> str:
-    return f"{name}-vpn-tfstate-{region}"
+    return f"{name}-vpnb-tfstate-{region}"
 
 
 def azure_storage_account_name(region: str) -> str:
@@ -222,7 +222,7 @@ def delete_backend_resources(
     nothing to remove (local / unknown backends).
 
     Notes:
-    - **s3 / gcs**: deletes the whole ``{name}-vpn-tfstate-{region}`` bucket
+    - **s3 / gcs**: deletes the whole ``{name}-vpnb-tfstate-{region}`` bucket
       (force). That bucket is shared by all node types for the same deployment
       name and region.
     - **azurerm**: deletes only the storage container named ``TF_VAR_name``
