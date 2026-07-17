@@ -9,6 +9,7 @@ from vpn_node_builder.cloud.credentials import CloudSession
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.process import CommandResult
 from vpn_node_builder.terraform.backend import (
+    backend_state_exists,
     build_backend_config,
     delete_backend_resources,
     ensure_backend_resources,
@@ -95,6 +96,47 @@ def test_delete_backend_resources_s3(monkeypatch) -> None:
     )
     assert deleted == "s3://vpnb-demo-us-east-1"
     assert ("aws", "s3", "rb", "s3://vpnb-demo-us-east-1", "--force") in calls
+
+
+def _write_cached_s3_backend(run_dir: Path, bucket: str) -> None:
+    tf_dir = run_dir / ".terraform"
+    tf_dir.mkdir(parents=True)
+    (tf_dir / "terraform.tfstate").write_text(
+        json.dumps({"backend": {"type": "s3", "config": {"bucket": bucket}}}),
+        encoding="utf-8",
+    )
+
+
+def test_backend_state_exists_true_false_and_none(monkeypatch, tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_cached_s3_backend(run_dir, "vpnb-demo-us-east-1")
+
+    def fake_run(args, **kwargs):
+        return CommandResult(
+            args=tuple(args),
+            returncode=0,
+            stdout="2024-01-01 00:00:00 vpnb-demo-us-east-1\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("vpn_node_builder.terraform.backend.run_cmd", fake_run)
+    env = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
+    session = CloudSession()
+    session.bind_environ(env)
+    assert backend_state_exists(run_dir, environ=env, session=session) is True
+
+    monkeypatch.setattr(
+        "vpn_node_builder.terraform.backend.run_cmd",
+        lambda args, **k: CommandResult(
+            args=tuple(args), returncode=0, stdout="", stderr=""
+        ),
+    )
+    assert backend_state_exists(run_dir, environ=env, session=session) is False
+
+    # No cached backend -> cannot determine.
+    assert (
+        backend_state_exists(tmp_path / "empty", environ=env, session=session) is None
+    )
 
 
 def test_delete_backend_resources_local_is_noop(monkeypatch) -> None:

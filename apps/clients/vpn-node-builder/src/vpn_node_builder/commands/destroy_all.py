@@ -10,7 +10,10 @@ import typer
 from rich.console import Console
 
 from vpn_node_builder.commands._context import prepare_command_context
-from vpn_node_builder.commands.destroy_node import destroy_deployment
+from vpn_node_builder.commands.destroy_node import (
+    MISSING_STATE,
+    destroy_deployment,
+)
 from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.credentials import REQUIRED_CREDENTIALS
 from vpn_node_builder.core.debug import set_debug
@@ -95,10 +98,16 @@ def destroy_all(
             try:
                 # Fresh context per node so per-node env vars do not leak.
                 node_ctx = prepare_command_context()
-                destroy_deployment(
+                status = destroy_deployment(
                     node_ctx, node_type=node_type, cloud=cloud, region=region
                 )
-                console.print(f"[green]Destroyed {label}.[/green]")
+                if status == MISSING_STATE:
+                    console.print(
+                        f"[yellow]{label}: remote state already gone; skipped "
+                        f"(removed stale local directory).[/yellow]"
+                    )
+                else:
+                    console.print(f"[green]Destroyed {label}.[/green]")
             except VpnNodeBuilderError as exc:
                 failures.append(f"{label}: {exc}")
                 console.print(f"[red]Failed to destroy {label}: {exc}[/red]")

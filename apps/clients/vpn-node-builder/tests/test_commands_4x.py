@@ -146,6 +146,53 @@ def test_destroy_all_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert deleted == [("s3", "myproj", "us-east-1")]
 
 
+def test_destroy_all_skips_missing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vpn_node_builder.commands import destroy_all as da
+
+    work = tmp_path / "proj"
+    root = work / ".workspace" / "run"
+    root.mkdir(parents=True)
+
+    class _Workspace:
+        working_dir = work
+        workspace_root = root
+
+    class _Ctx:
+        workspace = _Workspace()
+        environ = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
+        session = object()
+
+    monkeypatch.setattr(da, "prepare_command_context", lambda *a, **k: _Ctx())
+    monkeypatch.setattr(
+        da,
+        "iter_deployed_configs",
+        lambda *a, **k: [
+            ("sandbox", "aws", "us-east-1"),
+            ("sandbox", "aws", "eu-central-1"),
+        ],
+    )
+
+    def fake_destroy(c, *, node_type, cloud, region):
+        return da.MISSING_STATE if region == "eu-central-1" else "destroyed"
+
+    monkeypatch.setattr(da, "destroy_deployment", fake_destroy)
+    deleted: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        da,
+        "delete_backend_resources",
+        lambda backend, *, base_name, region, environ, session: (
+            deleted.append((backend, base_name, region)) or f"s3://x-{region}"
+        ),
+    )
+
+    result = runner.invoke(app, ["destroy-all", "-y"], env={SKIP_EULA_ENV: "1"})
+    assert result.exit_code == 0, result.output
+    # Missing-state node is not a failure; both regions' buckets still cleaned.
+    assert deleted == [("s3", "proj", "eu-central-1"), ("s3", "proj", "us-east-1")]
+
+
 def test_start_tunnel_rejects_bad_type() -> None:
     result = runner.invoke(
         app,

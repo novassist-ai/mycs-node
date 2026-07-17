@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+
 import typer
 from rich.console import Console
 
@@ -20,11 +22,16 @@ from vpn_node_builder.core.workspace import (
     PLACEHOLDER_NODE_TYPE,
     deployment_folder,
 )
+from vpn_node_builder.terraform.backend import backend_state_exists
 from vpn_node_builder.terraform.lifecycle import terraform_destroy, terraform_init
 from vpn_node_builder.terraform.region import set_cloud_region
 from vpn_node_builder.ui import print_cli_error
 
 console = Console()
+
+# Return values of :func:`destroy_deployment`.
+DESTROYED = "destroyed"
+MISSING_STATE = "missing-state"
 
 
 def destroy_deployment(
@@ -33,8 +40,13 @@ def destroy_deployment(
     node_type: str,
     cloud: str,
     region: str | None,
-) -> None:
-    """Destroy a single deployed node (shared by ``destroy-node``/``destroy-all``)."""
+) -> str:
+    """Destroy a single deployed node (shared by ``destroy-node``/``destroy-all``).
+
+    Returns ``DESTROYED`` normally, or ``MISSING_STATE`` when the remote state
+    storage the node was initialized with no longer exists (in which case the
+    stale local run directory is removed and no destroy is attempted).
+    """
     validated, run_dir = resolve_deployment(
         ctx,
         node_type=node_type,
@@ -54,11 +66,15 @@ def destroy_deployment(
         session=ctx.session,
         environ=env,
     )
+    if backend_state_exists(run_dir, environ=env, session=ctx.session) is False:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        return MISSING_STATE
     terraform_destroy(
         template_dir=validated.template_dir,
         work_dir=run_dir,
         environ=env,
     )
+    return DESTROYED
 
 
 def destroy_node(
@@ -89,8 +105,17 @@ def destroy_node(
     set_debug(debug)
     try:
         ctx = prepare_command_context()
-        destroy_deployment(ctx, node_type=node_type, cloud=cloud, region=region)
-        console.print("[green]Destroy completed.[/green]")
+        status = destroy_deployment(
+            ctx, node_type=node_type, cloud=cloud, region=region
+        )
+        if status == MISSING_STATE:
+            console.print(
+                "[yellow]Remote state storage no longer exists; nothing to "
+                "destroy. Removed the stale local deployment directory (any "
+                "leftover cloud resources must be cleaned up manually).[/yellow]"
+            )
+        else:
+            console.print("[green]Destroy completed.[/green]")
     except VpnNodeBuilderError as exc:
         print_cli_error(exc)
         raise typer.Exit(code=1) from exc

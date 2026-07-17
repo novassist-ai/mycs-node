@@ -12,6 +12,7 @@ import json
 import re
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from vpn_node_builder.cloud.credentials import CloudSession, ensure_cloud_cli
 from vpn_node_builder.core.errors import VpnNodeBuilderError
@@ -315,3 +316,86 @@ def delete_backend_resources(
         return None
     run_cmd(["gsutil", "-m", "rm", "-r", f"gs://{bucket}"], environ=env)
     return f"gs://{bucket}"
+
+
+def read_cached_backend(run_dir: Path) -> tuple[str, dict] | None:
+    """Return ``(backend_type, config)`` cached in ``run_dir/.terraform``.
+
+    Returns ``None`` when no initialized backend is recorded.
+    """
+    state_file = run_dir / ".terraform" / "terraform.tfstate"
+    if not state_file.is_file():
+        return None
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    backend = data.get("backend") or {}
+    backend_type = backend.get("type")
+    if not backend_type:
+        return None
+    return str(backend_type), dict(backend.get("config") or {})
+
+
+def backend_state_exists(
+    run_dir: Path,
+    *,
+    environ: MutableMapping[str, str],
+    session: CloudSession,
+) -> bool | None:
+    """Check whether the remote state storage a deployment was initialized with
+    still exists, using the backend cached in ``run_dir/.terraform``.
+
+    Returns ``True`` when the storage is present, ``False`` when the cloud
+    definitively reports it absent, and ``None`` when it cannot be determined
+    (no cached backend, local backend, or a failed/ambiguous lookup) — in which
+    case callers should fall back to a normal destroy.
+    """
+    cached = read_cached_backend(run_dir)
+    if cached is None:
+        return None
+    backend_type, config = cached
+    env = dict(environ)
+
+    if backend_type == "s3":
+        bucket = config.get("bucket")
+        if not bucket:
+            return None
+        ensure_cloud_cli("aws", session, environ)
+        listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
+        if listed.returncode != 0:
+            return None
+        return bucket in listed.stdout
+
+    if backend_type == "gcs":
+        bucket = config.get("bucket")
+        if not bucket:
+            return None
+        ensure_cloud_cli("google", session, environ)
+        listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
+        if listed.returncode != 0:
+            return None
+        existing = {
+            part
+            for line in listed.stdout.splitlines()
+            for part in [line.strip().rstrip("/").split("/")[-1]]
+            if part
+        }
+        return bucket in existing
+
+    if backend_type == "azurerm":
+        account = config.get("storage_account_name")
+        if not account:
+            return None
+        ensure_cloud_cli("azure", session, environ)
+        accounts = run_cmd(
+            ["az", "storage", "account", "list", "-o", "json"],
+            environ=env,
+            check=False,
+        )
+        if accounts.returncode != 0:
+            return None
+        names = {a.get("name") for a in json.loads(accounts.stdout or "[]")}
+        return account in names
+
+    return None
