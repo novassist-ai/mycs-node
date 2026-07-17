@@ -1,10 +1,18 @@
-"""Ensure and delete remote/local Terraform backend resources."""
+"""Ensure and delete remote/local Terraform backend resources.
+
+Buckets / storage accounts are region-bound, so state storage is scoped per
+``(cloud, region)`` and named from ``<folder>`` + ``<region>`` (see
+:func:`state_bucket_name`). Node types within the same region coexist in that
+bucket via the state key ``<node_type>`` (:func:`state_key`).
+"""
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from vpn_node_builder.cloud.credentials import CloudSession, ensure_cloud_cli
 from vpn_node_builder.core.errors import VpnNodeBuilderError
@@ -17,21 +25,37 @@ class BackendConfig:
     args: tuple[str, ...]
 
 
-def _deployment_name(environ: MutableMapping[str, str]) -> str:
-    name = (environ.get("TF_VAR_name") or "").strip()
+def _require_base_name(base_name: str) -> str:
+    name = (base_name or "").strip().lower()
     if not name:
-        raise VpnNodeBuilderError(
-            'Deployment name "TF_VAR_name" must be set in build-vars.sh.'
-        )
+        raise VpnNodeBuilderError("Workspace folder name could not be determined.")
     return name
 
 
-def state_bucket_name(name: str, region: str) -> str:
-    return f"{name}-vpnb-tfstate-{region}"
+def state_bucket_name(base_name: str, region: str | None) -> str:
+    """s3 / gcs bucket name: ``vpnb-<folder>-<region>`` (``vpnb-<folder>`` if no region).
+
+    Buckets are region-bound, so the region is part of the name.
+    """
+    base = f"vpnb-{_require_base_name(base_name)}"
+    return f"{base}-{region.lower()}" if region else base
 
 
-def azure_storage_account_name(region: str) -> str:
-    return f"vsstate{region}"
+def azure_container_name(base_name: str) -> str:
+    """Azure blob container name ``vpnb-<folder>`` (region lives in the account)."""
+    return f"vpnb-{_require_base_name(base_name)}"
+
+
+def azure_storage_account_name(base_name: str, region: str | None) -> str:
+    """Azure storage account ``vpnb<folder><region>`` (lowercase alnum, <=24)."""
+    base = re.sub(r"[^a-z0-9]", "", _require_base_name(base_name))
+    region_part = re.sub(r"[^a-z0-9]", "", (region or "").lower())
+    return f"vpnb{base}{region_part}"[:24]
+
+
+def state_key(node_type: str) -> str:
+    """Terraform state key/prefix ``<node_type>`` (region is encoded in the bucket)."""
+    return node_type
 
 
 def build_backend_config(
@@ -39,41 +63,41 @@ def build_backend_config(
     *,
     node_type: str,
     region: str | None,
+    base_name: str,
     environ: MutableMapping[str, str],
 ) -> BackendConfig:
-    if backend in {"s3", "azurerm", "gcs"}:
-        name = _deployment_name(environ)
-        if not region:
-            raise VpnNodeBuilderError(f'Region is required for backend "{backend}".')
-    else:
-        name = (environ.get("TF_VAR_name") or "").strip()
+    if backend in {"s3", "azurerm", "gcs"} and not region:
+        raise VpnNodeBuilderError(f'Region is required for backend "{backend}".')
+
+    key = state_key(node_type)
 
     if backend == "s3":
-        bucket = state_bucket_name(name, str(region))
+        bucket = state_bucket_name(base_name, region)
         return BackendConfig(
             backend=backend,
             args=(
-                f"-backend-config=key={node_type}",
+                f"-backend-config=key={key}",
                 f"-backend-config=bucket={bucket}",
             ),
         )
     if backend == "azurerm":
-        storage_account = azure_storage_account_name(str(region))
+        storage_account = azure_storage_account_name(base_name, region)
+        container = azure_container_name(base_name)
         return BackendConfig(
             backend=backend,
             args=(
                 "-backend-config=resource_group_name=default",
-                f"-backend-config=container_name={name}",
-                "-backend-config=key=terraform.tfstate",
+                f"-backend-config=container_name={container}",
+                f"-backend-config=key={key}",
                 f"-backend-config=storage_account_name={storage_account}",
             ),
         )
     if backend == "gcs":
-        bucket = state_bucket_name(name, str(region))
+        bucket = state_bucket_name(base_name, region)
         return BackendConfig(
             backend=backend,
             args=(
-                f"-backend-config=prefix={node_type}",
+                f"-backend-config=prefix={key}",
                 f"-backend-config=bucket={bucket}",
             ),
         )
@@ -96,13 +120,14 @@ def ensure_backend_resources(
     backend: str,
     *,
     region: str | None,
+    base_name: str,
     environ: MutableMapping[str, str],
     session: CloudSession,
 ) -> None:
-    name = _deployment_name(environ) if backend in {"s3", "azurerm", "gcs"} else ""
+    """Create the per-(cloud, region) bucket / account+container if it does not exist."""
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
-        bucket = state_bucket_name(name, str(region))
+        bucket = state_bucket_name(base_name, region)
         listed = run_cmd(["aws", "s3", "ls"], environ=dict(environ), check=False)
         if bucket not in listed.stdout:
             run_cmd(
@@ -133,7 +158,7 @@ def ensure_backend_resources(
                 ],
                 environ=dict(environ),
             )
-        storage_account = azure_storage_account_name(str(region))
+        storage_account = azure_storage_account_name(base_name, region)
         accounts = run_cmd(
             ["az", "storage", "account", "list", "-o", "json"],
             environ=dict(environ),
@@ -172,8 +197,9 @@ def ensure_backend_resources(
             ],
             environ=dict(environ),
         )
+        container = azure_container_name(base_name)
         container_names = {c.get("name") for c in json.loads(containers.stdout)}
-        if name not in container_names:
+        if container not in container_names:
             run_cmd(
                 [
                     "az",
@@ -181,7 +207,7 @@ def ensure_backend_resources(
                     "container",
                     "create",
                     "--name",
-                    name,
+                    container,
                     "--account-name",
                     storage_account,
                     "--output",
@@ -193,7 +219,7 @@ def ensure_backend_resources(
 
     if backend == "gcs":
         ensure_cloud_cli("google", session, environ)
-        bucket = state_bucket_name(name, str(region))
+        bucket = state_bucket_name(base_name, region)
         listed = run_cmd(["gsutil", "ls"], environ=dict(environ), check=False)
         existing = {
             part
@@ -212,33 +238,30 @@ def ensure_backend_resources(
 def delete_backend_resources(
     backend: str,
     *,
+    base_name: str,
     region: str | None,
     environ: MutableMapping[str, str],
     session: CloudSession,
 ) -> str | None:
-    """Delete remote backend storage created by :func:`ensure_backend_resources`.
+    """Delete the ``(cloud, region)`` state storage, if it exists.
 
     Returns a short description of what was deleted, or ``None`` when there is
-    nothing to remove (local / unknown backends).
+    nothing to remove (local / unknown backends, or storage not present).
 
     Notes:
-    - **s3 / gcs**: deletes the whole ``{name}-vpnb-tfstate-{region}`` bucket
-      (force). That bucket is shared by all node types for the same deployment
-      name and region.
-    - **azurerm**: deletes only the storage container named ``TF_VAR_name``
-      (shared storage account / ``default`` resource group are left in place).
+    - **s3 / gcs**: deletes the ``vpnb-<folder>-<region>`` bucket (force). That
+      bucket holds every node type deployed to that region.
+    - **azurerm**: deletes the ``vpnb<folder><region>`` storage account (the
+      per-region "bucket"); the ``default`` resource group is left in place.
     """
     if backend not in {"s3", "azurerm", "gcs"}:
         return None
-    if not region:
-        raise VpnNodeBuilderError(f'Region is required to delete backend "{backend}".')
 
-    name = _deployment_name(environ)
     env = dict(environ)
 
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
-        bucket = state_bucket_name(name, region)
+        bucket = state_bucket_name(base_name, region)
         listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
         if bucket not in listed.stdout:
             return None
@@ -250,47 +273,38 @@ def delete_backend_resources(
 
     if backend == "azurerm":
         ensure_cloud_cli("azure", session, environ)
-        storage_account = azure_storage_account_name(region)
-        containers = run_cmd(
-            [
-                "az",
-                "storage",
-                "container",
-                "list",
-                "--account-name",
-                storage_account,
-                "-o",
-                "json",
-            ],
+        storage_account = azure_storage_account_name(base_name, region)
+        accounts = run_cmd(
+            ["az", "storage", "account", "list", "-o", "json"],
             environ=env,
             check=False,
         )
-        if containers.returncode != 0:
+        if accounts.returncode != 0:
             return None
-        container_names = {c.get("name") for c in json.loads(containers.stdout or "[]")}
-        if name not in container_names:
+        account_names = {a.get("name") for a in json.loads(accounts.stdout or "[]")}
+        if storage_account not in account_names:
             return None
         run_cmd(
             [
                 "az",
                 "storage",
-                "container",
+                "account",
                 "delete",
                 "--name",
-                name,
-                "--account-name",
                 storage_account,
+                "--resource-group",
+                "default",
                 "--yes",
                 "--output",
                 "none",
             ],
             environ=env,
         )
-        return f"azurerm container {name!r} in account {storage_account}"
+        return f"azurerm storage account {storage_account!r}"
 
     # gcs
     ensure_cloud_cli("google", session, environ)
-    bucket = state_bucket_name(name, region)
+    bucket = state_bucket_name(base_name, region)
     listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
     existing = {
         part
@@ -302,3 +316,86 @@ def delete_backend_resources(
         return None
     run_cmd(["gsutil", "-m", "rm", "-r", f"gs://{bucket}"], environ=env)
     return f"gs://{bucket}"
+
+
+def read_cached_backend(run_dir: Path) -> tuple[str, dict] | None:
+    """Return ``(backend_type, config)`` cached in ``run_dir/.terraform``.
+
+    Returns ``None`` when no initialized backend is recorded.
+    """
+    state_file = run_dir / ".terraform" / "terraform.tfstate"
+    if not state_file.is_file():
+        return None
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    backend = data.get("backend") or {}
+    backend_type = backend.get("type")
+    if not backend_type:
+        return None
+    return str(backend_type), dict(backend.get("config") or {})
+
+
+def backend_state_exists(
+    run_dir: Path,
+    *,
+    environ: MutableMapping[str, str],
+    session: CloudSession,
+) -> bool | None:
+    """Check whether the remote state storage a deployment was initialized with
+    still exists, using the backend cached in ``run_dir/.terraform``.
+
+    Returns ``True`` when the storage is present, ``False`` when the cloud
+    definitively reports it absent, and ``None`` when it cannot be determined
+    (no cached backend, local backend, or a failed/ambiguous lookup) — in which
+    case callers should fall back to a normal destroy.
+    """
+    cached = read_cached_backend(run_dir)
+    if cached is None:
+        return None
+    backend_type, config = cached
+    env = dict(environ)
+
+    if backend_type == "s3":
+        bucket = config.get("bucket")
+        if not bucket:
+            return None
+        ensure_cloud_cli("aws", session, environ)
+        listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
+        if listed.returncode != 0:
+            return None
+        return bucket in listed.stdout
+
+    if backend_type == "gcs":
+        bucket = config.get("bucket")
+        if not bucket:
+            return None
+        ensure_cloud_cli("google", session, environ)
+        listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
+        if listed.returncode != 0:
+            return None
+        existing = {
+            part
+            for line in listed.stdout.splitlines()
+            for part in [line.strip().rstrip("/").split("/")[-1]]
+            if part
+        }
+        return bucket in existing
+
+    if backend_type == "azurerm":
+        account = config.get("storage_account_name")
+        if not account:
+            return None
+        ensure_cloud_cli("azure", session, environ)
+        accounts = run_cmd(
+            ["az", "storage", "account", "list", "-o", "json"],
+            environ=env,
+            check=False,
+        )
+        if accounts.returncode != 0:
+            return None
+        names = {a.get("name") for a in json.loads(accounts.stdout or "[]")}
+        return account in names
+
+    return None

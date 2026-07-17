@@ -7,18 +7,24 @@ from collections.abc import MutableMapping
 from vpn_node_builder.cloud.credentials import CloudSession, ensure_cloud_cli
 from vpn_node_builder.cloud.regions import validate_region
 from vpn_node_builder.core.errors import VpnNodeBuilderError
-from vpn_node_builder.core.workspace import clouds_with_regions
+from vpn_node_builder.core.workspace import clouds_with_regions, deployment_name
 
 
 def set_cloud_region(
     cloud: str,
     region: str | None,
     *,
+    base_name: str,
     backend: str | None,
     session: CloudSession,
     environ: MutableMapping[str, str],
 ) -> None:
-    """Validate region (when required) and align backend provider credentials."""
+    """Validate region, derive ``TF_VAR_name``, and align backend credentials.
+
+    ``TF_VAR_name`` is always derived as ``<folder>-<cloud>[-<region>]`` here so
+    it is consistent across deploy / destroy / reinit and overrides any stale
+    value left in ``build-vars.sh``.
+    """
     if cloud in clouds_with_regions(dict(environ)):
         if not region:
             raise VpnNodeBuilderError(f'Region is required for cloud "{cloud}".')
@@ -28,6 +34,8 @@ def set_cloud_region(
         environ["TF_VAR_region"] = region
     elif region:
         environ["TF_VAR_region"] = region
+
+    environ["TF_VAR_name"] = deployment_name(base_name, cloud, region)
 
     backend_cloud = {
         "s3": "aws",

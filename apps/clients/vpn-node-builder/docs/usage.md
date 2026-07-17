@@ -7,8 +7,9 @@ How to operate `vpnb` day to day. For install paths see
 
 1. Create an empty project directory (this becomes your working dir).
 2. Run `vpnb init` and accept the [EULA](https://novassist.ai/legal/).
-3. Edit `cloud-creds.sh` and `build-vars.sh` (at least set `TF_VAR_name` and
-   credentials for the clouds you use).
+3. Edit `cloud-creds.sh` and `build-vars.sh` (set credentials for the clouds you
+   use, DNS/cert options, and VPN users). The deployment name is derived from the
+   project directory name, so you no longer set `TF_VAR_name`.
 4. Optionally run `vpnb doctor` and `vpnb show-regions <cloud>`.
 5. Deploy with `vpnb deploy-node <NODE_TYPE> <CLOUD> …`.
 6. Manage running nodes with `vpnb show-nodes`, download VPN config, or destroy.
@@ -27,6 +28,7 @@ do not.
 | `vpnb deploy-node` | Plan or apply a recipe |
 | `vpnb reinit-node` | Re-run Terraform init for an existing deployment |
 | `vpnb destroy-node` | Destroy a deployment |
+| `vpnb destroy-all` | Destroy every deployment + delete state buckets |
 | `vpnb show-nodes` | Interactive list + actions |
 | `vpnb download-vpn-config` | Download VPN client files |
 | `vpnb start-tunnel` | Run obfuscation tunnel client |
@@ -52,7 +54,7 @@ Creates stubs **only if missing** (never overwrites):
 | File | Purpose |
 |------|---------|
 | `cloud-creds.sh` | `AWS_*`, `GOOGLE_*`, `ARM_*` |
-| `build-vars.sh` | `TF_VAR_name`, DNS, cert DN, VPN users, idle timeout |
+| `build-vars.sh` | DNS, cert DN, VPN users, idle timeout (name is derived) |
 
 Also ensures `.workspace/run` and `.workspace/templates` exist. Templates link
 to cookbook recipes when the cookbook path is resolvable.
@@ -123,7 +125,6 @@ State and keys land under
 ```bash
 vpnb reinit-node <NODE_TYPE> <CLOUD> [-r REGION]
 vpnb destroy-node <NODE_TYPE> <CLOUD> [-r REGION]
-vpnb destroy-node sandbox aws -r us-east-1 -x   # also delete remote state storage
 ```
 
 `reinit-node` refreshes Terraform init / backend wiring without apply or destroy.
@@ -132,7 +133,27 @@ vpnb destroy-node sandbox aws -r us-east-1 -x   # also delete remote state stora
 | Option | Meaning |
 |--------|---------|
 | `-r/--region` | Required for aws / azure / google |
-| `-x/--delete-remote-state` | After destroy, delete s3/gcs state bucket `{TF_VAR_name}-vpnb-tfstate-{region}`, or the Azure storage container named `TF_VAR_name` |
+| `-d/--debug` | Trace external commands |
+
+Remote state storage is shared per cloud for the whole workspace and is **not**
+deleted by `destroy-node`. Use `vpnb destroy-all` to tear everything down and
+remove the state buckets.
+
+## `vpnb destroy-all`
+
+```bash
+vpnb destroy-all [-y|--yes] [-d|--debug]
+```
+
+Destroys every deployed node in the workspace, then deletes the per-region state
+bucket (`vpnb-<folder>-<region>`) for each configured cloud/region that had a
+deployment. State buckets are only removed after all nodes destroy
+successfully; if any node fails, buckets are left in place so the run can be
+retried.
+
+| Option | Meaning |
+|--------|---------|
+| `-y/--yes` | Skip the confirmation prompt |
 | `-d/--debug` | Trace external commands |
 
 **Caution:** the s3/gcs bucket is shared by all node types for the same deployment name and region; `-x` removes the whole bucket.
