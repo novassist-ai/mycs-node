@@ -5,9 +5,14 @@ Lifecycle helpers used by vpn-node-builder commands.
 ## Deployment name and state storage
 
 Buckets / storage accounts are region-bound, so state storage is scoped per
-`(cloud, region)` and named from the **workspace folder** (`<folder>` = the
-working directory name, lowercased) plus the region. Node types deployed to the
-same region share one bucket via the state key.
+`(cloud, region)` and named from the **workspace name** (`<folder>`) plus the
+region. Node types deployed to the same region share one bucket via the state
+key.
+
+`<folder>` is the slugified workspace name: `VPNB_WORKSPACE_NAME` if set
+(the Docker launcher sets it to the host directory name, since the container
+mount is always `/work`), otherwise the working directory name. See
+`core.workspace.deployment_folder`.
 
 | Item | Derivation |
 |------|------------|

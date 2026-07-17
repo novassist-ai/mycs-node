@@ -61,7 +61,7 @@ def destroy_deployment(
     set_cloud_region(
         cloud,
         region,
-        base_name=deployment_folder(validated.workspace),
+        base_name=deployment_folder(validated.workspace, env),
         backend=validated.backend,
         session=ctx.session,
         environ=env,
@@ -160,10 +160,11 @@ def reinit_node(
         env = ctx.environ
         env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
         env["TF_VAR_idle_action"] = ""
+        base_name = deployment_folder(validated.workspace, env)
         set_cloud_region(
             cloud,
             region,
-            base_name=deployment_folder(validated.workspace),
+            base_name=base_name,
             backend=validated.backend,
             session=ctx.session,
             environ=env,
@@ -172,7 +173,7 @@ def reinit_node(
             node_type=validated.node_type,
             cloud=cloud,
             region=region,
-            base_name=deployment_folder(validated.workspace),
+            base_name=base_name,
             template_dir=validated.template_dir,
             work_dir=run_dir,
             backend=validated.backend,

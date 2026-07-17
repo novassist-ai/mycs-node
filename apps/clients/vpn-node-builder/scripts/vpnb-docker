@@ -58,9 +58,14 @@ if [[ -t 0 && -t 1 ]]; then
   extra_args+=(-it)
 fi
 
+# Pass the host directory name so the in-container CLI can derive a stable
+# workspace name (the /work mount hides the real folder name).
+workspace_name="$(basename "$(pwd)")"
+
 exec docker run --privileged --rm \
   ${extra_args[@]+"${extra_args[@]}"} \
   -p 4495:4495 -p 4495:4495/udp \
+  -e "VPNB_WORKSPACE_NAME=${VPNB_WORKSPACE_NAME:-${workspace_name}}" \
   -v "$(pwd):/work" \
   -w /work \
   "${IMAGE}" \

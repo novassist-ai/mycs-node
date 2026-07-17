@@ -9,7 +9,9 @@ How to operate `vpnb` day to day. For install paths see
 2. Run `vpnb init` and accept the [EULA](https://novassist.ai/legal/).
 3. Edit `cloud-creds.sh` and `build-vars.sh` (set credentials for the clouds you
    use, DNS/cert options, and VPN users). The deployment name is derived from the
-   project directory name, so you no longer set `TF_VAR_name`.
+   project directory name, so you no longer set `TF_VAR_name`. Under Docker the
+   host folder name is passed in via `VPNB_WORKSPACE_NAME` (see below); you can
+   also set that variable yourself to pin an explicit workspace name.
 4. Optionally run `vpnb doctor` and `vpnb show-regions <cloud>`.
 5. Deploy with `vpnb deploy-node <NODE_TYPE> <CLOUD> …`.
 6. Manage running nodes with `vpnb show-nodes`, download VPN config, or destroy.
@@ -62,6 +64,21 @@ to cookbook recipes when the cookbook path is resolvable.
 Cert DN defaults use NovAssist branding (`novassist` / `novassist dev`).
 
 `init` does **not** require Terraform or cloud CLIs.
+
+### Workspace name (`VPNB_WORKSPACE_NAME`)
+
+`TF_VAR_name` and the state bucket names are derived from the **workspace name**,
+which is normally the project directory's basename (slugified: lowercased,
+non-alphanumeric → `-`).
+
+Under Docker the project is mounted at the fixed path `/work`, so the directory
+name inside the container is always `work`. To keep names stable and matching a
+native run, the launchers (`vpnb`, `vpnb-dev`, and the Windows/PowerShell
+variants) pass the **host** folder name into the container via the
+`VPNB_WORKSPACE_NAME` environment variable. You can also set
+`VPNB_WORKSPACE_NAME` yourself (in your shell or `build-vars.sh`) to pin an
+explicit workspace name regardless of the folder. Run `vpnb doctor` to see the
+resolved name and its source.
 
 ---
 

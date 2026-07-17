@@ -61,7 +61,7 @@ def destroy_all(
     set_debug(debug)
     try:
         ctx = prepare_command_context()
-        base_name = deployment_folder(ctx.workspace)
+        base_name = deployment_folder(ctx.workspace, ctx.environ)
         configs = iter_deployed_configs(ctx.workspace.workspace_root, ctx.environ)
         clouds = _configured_clouds(ctx.environ)
 

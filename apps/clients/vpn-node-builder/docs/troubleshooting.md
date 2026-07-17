@@ -88,7 +88,12 @@ vpnb show-regions aws
 
 - State storage is per cloud **and region**: bucket `vpnb-<folder>-<region>`
   (S3/GCS) or storage account `vpnb<folder><region>` (Azure), where `<folder>`
-  is the project directory name. State keys are `<node_type>`.
+  is the workspace name. State keys are `<node_type>`.
+- The workspace name comes from `VPNB_WORKSPACE_NAME` if set, else the project
+  directory name. Under Docker the launcher sets `VPNB_WORKSPACE_NAME` to the
+  host folder name (the mount is always `/work`, so the container directory name
+  cannot be used). If bucket names look wrong (e.g. `vpnb-work-...`), check
+  `vpnb doctor` → "workspace name" and set `VPNB_WORKSPACE_NAME` explicitly.
 - Credentials must allow creating the state bucket (S3), storage account
   (Azure), or GCS bucket.
 - Local targets (`vagrant-vbox`, `docker`) use the `local` backend;

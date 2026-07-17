@@ -170,7 +170,7 @@ def download_vpn_config(
         configs_dir = validated.workspace.working_dir / "configs" / node_name
         configs_dir.mkdir(parents=True, exist_ok=True)
         deployment_name = derive_deployment_name(
-            deployment_folder(validated.workspace), cloud, region
+            deployment_folder(validated.workspace, ctx.environ), cloud, region
         )
         os_type = platform.system()
 

@@ -35,5 +35,8 @@ if errorlevel 1 (
   docker pull %VPNB_IMAGE%
   if errorlevel 1 exit /b %ERRORLEVEL%
 )
-docker run --privileged --rm -it -p 4495:4495 -p 4495:4495/udp -v "%CD%:/work" -w /work %VPNB_IMAGE% %*
+if not defined VPNB_WORKSPACE_NAME (
+  for %%I in ("%CD%") do set "VPNB_WORKSPACE_NAME=%%~nxI"
+)
+docker run --privileged --rm -it -p 4495:4495 -p 4495:4495/udp -e VPNB_WORKSPACE_NAME=%VPNB_WORKSPACE_NAME% -v "%CD%:/work" -w /work %VPNB_IMAGE% %*
 endlocal
