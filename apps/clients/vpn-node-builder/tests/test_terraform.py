@@ -22,24 +22,30 @@ from vpn_node_builder.terraform.region import set_cloud_region
 
 
 def test_build_backend_config_s3() -> None:
-    env = {"TF_VAR_name": "demo"}
     cfg = build_backend_config(
-        "s3", node_type="sandbox", region="us-east-1", environ=env
+        "s3",
+        node_type="sandbox",
+        region="us-east-1",
+        base_name="demo",
+        environ={},
     )
-    assert "bucket=demo-vpnb-tfstate-us-east-1" in cfg.args[1]
+    assert "key=sandbox" in cfg.args[0]
+    assert "bucket=vpnb-demo-us-east-1" in cfg.args[1]
 
 
 def test_build_backend_config_local() -> None:
     env = {"TF_VAR_cb_local_state_path": "/tmp/state"}
     cfg = build_backend_config(
-        "local", node_type="sandbox", region=None, environ=env
+        "local", node_type="sandbox", region=None, base_name="demo", environ=env
     )
     assert cfg.args[0].endswith("/terraform/local.tfstate")
 
 
-def test_build_backend_config_requires_name() -> None:
-    with pytest.raises(VpnNodeBuilderError, match="TF_VAR_name"):
-        build_backend_config("s3", node_type="sandbox", region="us-east-1", environ={})
+def test_build_backend_config_requires_region() -> None:
+    with pytest.raises(VpnNodeBuilderError, match="Region is required"):
+        build_backend_config(
+            "s3", node_type="sandbox", region=None, base_name="demo", environ={}
+        )
 
 
 def test_ensure_backend_creates_s3_bucket(monkeypatch) -> None:
@@ -47,20 +53,23 @@ def test_ensure_backend_creates_s3_bucket(monkeypatch) -> None:
 
     def fake_run(args, **kwargs):
         calls.append(tuple(args))
-        if args[:2] == ("aws", "s3") and args[2] == "ls":
-            return CommandResult(args=tuple(args), returncode=0, stdout="", stderr="")
         return CommandResult(args=tuple(args), returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("vpn_node_builder.terraform.backend.run_cmd", fake_run)
-    env = {
-        "TF_VAR_name": "demo",
-        "AWS_ACCESS_KEY": "a",
-        "AWS_SECRET_KEY": "b",
-    }
+    env = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
     session = CloudSession()
     session.bind_environ(env)
-    ensure_backend_resources("s3", region="us-east-1", environ=env, session=session)
-    assert any(c[:3] == ("aws", "s3", "mb") for c in calls)
+    ensure_backend_resources(
+        "s3", region="us-east-1", base_name="demo", environ=env, session=session
+    )
+    assert (
+        "aws",
+        "s3",
+        "mb",
+        "s3://vpnb-demo-us-east-1",
+        "--region",
+        "us-east-1",
+    ) in calls
 
 
 def test_delete_backend_resources_s3(monkeypatch) -> None:
@@ -72,24 +81,20 @@ def test_delete_backend_resources_s3(monkeypatch) -> None:
             return CommandResult(
                 args=tuple(args),
                 returncode=0,
-                stdout="2024-01-01 00:00:00 demo-vpnb-tfstate-us-east-1\n",
+                stdout="2024-01-01 00:00:00 vpnb-demo-us-east-1\n",
                 stderr="",
             )
         return CommandResult(args=tuple(args), returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("vpn_node_builder.terraform.backend.run_cmd", fake_run)
-    env = {
-        "TF_VAR_name": "demo",
-        "AWS_ACCESS_KEY": "a",
-        "AWS_SECRET_KEY": "b",
-    }
+    env = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
     session = CloudSession()
     session.bind_environ(env)
     deleted = delete_backend_resources(
-        "s3", region="us-east-1", environ=env, session=session
+        "s3", base_name="demo", region="us-east-1", environ=env, session=session
     )
-    assert deleted == "s3://demo-vpnb-tfstate-us-east-1"
-    assert ("aws", "s3", "rb", "s3://demo-vpnb-tfstate-us-east-1", "--force") in calls
+    assert deleted == "s3://vpnb-demo-us-east-1"
+    assert ("aws", "s3", "rb", "s3://vpnb-demo-us-east-1", "--force") in calls
 
 
 def test_delete_backend_resources_local_is_noop(monkeypatch) -> None:
@@ -100,6 +105,7 @@ def test_delete_backend_resources_local_is_noop(monkeypatch) -> None:
     assert (
         delete_backend_resources(
             "local",
+            base_name="demo",
             region=None,
             environ={},
             session=CloudSession(),
@@ -122,11 +128,13 @@ def test_set_cloud_region_aws(monkeypatch) -> None:
     set_cloud_region(
         "aws",
         "us-east-1",
+        base_name="demo",
         backend="s3",
         session=session,
         environ=env,
     )
     assert env["TF_VAR_region"] == "us-east-1"
+    assert env["TF_VAR_name"] == "demo-aws-us-east-1"
     assert env["AWS_DEFAULT_REGION"] == "us-east-1"
     assert env["AWS_ACCESS_KEY_ID"] == "a"
 
@@ -173,11 +181,12 @@ def test_terraform_init_passes_backend_args(monkeypatch, tmp_path: Path) -> None
         "vpn_node_builder.terraform.lifecycle.ensure_backend_resources", fake_ensure
     )
     monkeypatch.setattr("vpn_node_builder.terraform.lifecycle.run_terraform", fake_run_tf)
-    env = {"TF_VAR_name": "demo", "AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
+    env = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
     terraform_init(
         node_type="sandbox",
         cloud="aws",
         region="us-east-1",
+        base_name="demo",
         template_dir=tmp_path,
         work_dir=tmp_path / "run",
         backend="s3",

@@ -6,6 +6,7 @@ import typer
 from rich.console import Console
 
 from vpn_node_builder.commands._context import (
+    CommandContext,
     load_input_vars,
     prepare_command_context,
     require_run_dir,
@@ -14,13 +15,50 @@ from vpn_node_builder.commands._context import (
 from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
-from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
-from vpn_node_builder.terraform.backend import delete_backend_resources
+from vpn_node_builder.core.workspace import (
+    PLACEHOLDER_CLOUD,
+    PLACEHOLDER_NODE_TYPE,
+    deployment_folder,
+)
 from vpn_node_builder.terraform.lifecycle import terraform_destroy, terraform_init
 from vpn_node_builder.terraform.region import set_cloud_region
 from vpn_node_builder.ui import print_cli_error
 
 console = Console()
+
+
+def destroy_deployment(
+    ctx: CommandContext,
+    *,
+    node_type: str,
+    cloud: str,
+    region: str | None,
+) -> None:
+    """Destroy a single deployed node (shared by ``destroy-node``/``destroy-all``)."""
+    validated, run_dir = resolve_deployment(
+        ctx,
+        node_type=node_type,
+        cloud=cloud,
+        region=region,
+        command="destroy_node",
+    )
+    require_run_dir(run_dir)
+    env = ctx.environ
+    env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
+    load_input_vars(run_dir, env)
+    set_cloud_region(
+        cloud,
+        region,
+        base_name=deployment_folder(validated.workspace),
+        backend=validated.backend,
+        session=ctx.session,
+        environ=env,
+    )
+    terraform_destroy(
+        template_dir=validated.template_dir,
+        work_dir=run_dir,
+        environ=env,
+    )
 
 
 def destroy_node(
@@ -38,15 +76,6 @@ def destroy_node(
         "--region",
         help="The region where the node to be destroyed is deployed",
     ),
-    delete_remote_state: bool = typer.Option(
-        False,
-        "-x",
-        "--delete-remote-state",
-        help=(
-            "After destroy, delete the remote Terraform state bucket/container "
-            "for this deployment (s3/gcs bucket or Azure container)"
-        ),
-    ),
     debug: bool = typer.Option(
         False,
         "-d",
@@ -56,57 +85,12 @@ def destroy_node(
 ) -> None:
     """Destroy a node that has been deployed to the given region."""
     region = resolve_option(region, None)
-    delete_remote_state = resolve_option(delete_remote_state, False)
     debug = resolve_option(debug, False)
     set_debug(debug)
     try:
         ctx = prepare_command_context()
-        validated, run_dir = resolve_deployment(
-            ctx,
-            node_type=node_type,
-            cloud=cloud,
-            region=region,
-            command="destroy_node",
-        )
-        require_run_dir(run_dir)
-        env = ctx.environ
-        env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
-        load_input_vars(run_dir, env)
-        set_cloud_region(
-            cloud,
-            region,
-            backend=validated.backend,
-            session=ctx.session,
-            environ=env,
-        )
-        terraform_destroy(
-            template_dir=validated.template_dir,
-            work_dir=run_dir,
-            environ=env,
-        )
+        destroy_deployment(ctx, node_type=node_type, cloud=cloud, region=region)
         console.print("[green]Destroy completed.[/green]")
-        if delete_remote_state:
-            if not validated.backend:
-                console.print(
-                    "[yellow]No Terraform backend configured; "
-                    "nothing to delete for remote state.[/yellow]"
-                )
-            else:
-                deleted = delete_backend_resources(
-                    validated.backend,
-                    region=region,
-                    environ=env,
-                    session=ctx.session,
-                )
-                if deleted:
-                    console.print(
-                        f"[green]Deleted remote Terraform state: {deleted}[/green]"
-                    )
-                else:
-                    console.print(
-                        "[yellow]Remote Terraform state storage was not found "
-                        "or does not apply to this backend.[/yellow]"
-                    )
     except VpnNodeBuilderError as exc:
         print_cli_error(exc)
         raise typer.Exit(code=1) from exc
@@ -154,6 +138,7 @@ def reinit_node(
         set_cloud_region(
             cloud,
             region,
+            base_name=deployment_folder(validated.workspace),
             backend=validated.backend,
             session=ctx.session,
             environ=env,
@@ -162,6 +147,7 @@ def reinit_node(
             node_type=validated.node_type,
             cloud=cloud,
             region=region,
+            base_name=deployment_folder(validated.workspace),
             template_dir=validated.template_dir,
             work_dir=run_dir,
             backend=validated.backend,

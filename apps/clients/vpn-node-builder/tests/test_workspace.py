@@ -6,10 +6,34 @@ import pytest
 
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import (
+    deployment_name,
     ensure_template_links,
+    iter_deployed_configs,
     set_working_dir,
     validate_workspace,
 )
+
+
+def test_deployment_name_with_and_without_region() -> None:
+    assert deployment_name("MyProj", "aws", "us-east-1") == "myproj-aws-us-east-1"
+    assert deployment_name("MyProj", "vagrant-vbox", None) == "myproj-vagrant-vbox"
+
+
+def test_iter_deployed_configs(tmp_path: Path) -> None:
+    root = tmp_path / "run"
+    aws = root / "sandbox" / "aws" / "us-east-1"
+    aws.mkdir(parents=True)
+    (aws / "output.json").write_text("{}", encoding="utf-8")
+    # region-less cloud: deployed marker directly under the cloud dir
+    local = root / "sandbox" / "vagrant-vbox"
+    (local / ".terraform").mkdir(parents=True)
+    # not deployed (no marker) -> excluded
+    (root / "sandbox" / "google" / "europe-west1").mkdir(parents=True)
+
+    configs = iter_deployed_configs(root, {})
+    assert ("sandbox", "aws", "us-east-1") in configs
+    assert ("sandbox", "vagrant-vbox", None) in configs
+    assert ("sandbox", "google", "europe-west1") not in configs
 
 
 def _make_recipes(root: Path) -> Path:

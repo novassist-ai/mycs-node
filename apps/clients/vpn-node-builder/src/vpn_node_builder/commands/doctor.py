@@ -15,7 +15,17 @@ from vpn_node_builder.core.environment import (
 )
 from vpn_node_builder.core.eula import is_eula_accepted
 from vpn_node_builder.core.paths import PathContext, resolve_paths
-from vpn_node_builder.core.workspace import set_working_dir
+from vpn_node_builder.core.workspace import (
+    deployment_folder,
+    deployment_name,
+    iter_deployed_configs,
+    set_working_dir,
+)
+from vpn_node_builder.terraform.backend import (
+    azure_container_name,
+    azure_storage_account_name,
+    state_bucket_name,
+)
 
 console = Console()
 
@@ -47,6 +57,38 @@ def doctor() -> None:
     console.print(
         f"  build-vars.sh:  {'present' if build_vars.is_file() else 'missing'} ({build_vars})"
     )
+
+    folder = deployment_folder(workspace)
+    configs = iter_deployed_configs(workspace.workspace_root)
+
+    console.print("  state storage (derived, region-bound):")
+    console.print(f"    - s3 / gcs bucket: vpnb-{folder}-<region>")
+    console.print(
+        f"    - azure:           account vpnb{folder}<region>, "
+        f"container {azure_container_name(folder)}"
+    )
+    remote = sorted(
+        {(c, r) for _, c, r in configs if c in {"aws", "google", "azure"} and r}
+    )
+    for cloud, region in remote:
+        if cloud == "azure":
+            location = (
+                f"account {azure_storage_account_name(folder, region)}, "
+                f"container {azure_container_name(folder)}"
+            )
+        else:
+            location = f"bucket {state_bucket_name(folder, region)}"
+        console.print(f"    - {cloud}/{region}: {location}")
+
+    console.print("  vpn vpc names (derived):")
+    if configs:
+        for node_type, cloud, region in configs:
+            location = f"{node_type}/{cloud}" + (f"/{region}" if region else "")
+            console.print(
+                f"    - {location}: {deployment_name(folder, cloud, region)}"
+            )
+    else:
+        console.print("    - (no deployments found)")
 
     console.print("  tools:")
     for status in check_tools(path_env=os.environ.get("PATH")):

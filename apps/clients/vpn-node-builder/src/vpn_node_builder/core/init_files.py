@@ -25,8 +25,9 @@ export ARM_CLIENT_SECRET=
 """
 
 BUILD_VARS_STUB = """\
-# Deployment identifier or name
-export TF_VAR_name=
+# The deployment name (TF_VAR_name) is derived automatically as
+# <folder>-<cloud>-<region> (region omitted for region-less clouds), where
+# <folder> is this workspace directory's name. Do not set it here.
 
 # DNS Zone for all deployments
 export TF_VAR_attach_dns_zone=false

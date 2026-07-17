@@ -22,7 +22,12 @@ from vpn_node_builder.commands._context import (
 from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
-from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
+from vpn_node_builder.core.workspace import (
+    PLACEHOLDER_CLOUD,
+    PLACEHOLDER_NODE_TYPE,
+    deployment_folder,
+)
+from vpn_node_builder.core.workspace import deployment_name as derive_deployment_name
 from vpn_node_builder.ui import print_cli_error
 
 console = Console()
@@ -164,7 +169,9 @@ def download_vpn_config(
         # configs live next to the project working dir
         configs_dir = validated.workspace.working_dir / "configs" / node_name
         configs_dir.mkdir(parents=True, exist_ok=True)
-        deployment_name = ctx.environ.get("TF_VAR_name") or "node"
+        deployment_name = derive_deployment_name(
+            deployment_folder(validated.workspace), cloud, region
+        )
         os_type = platform.system()
 
         if os_type == "Darwin":

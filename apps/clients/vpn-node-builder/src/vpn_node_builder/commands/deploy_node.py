@@ -16,7 +16,11 @@ from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.debug import set_debug
 from vpn_node_builder.core.environment import source_shell_files
 from vpn_node_builder.core.errors import VpnNodeBuilderError
-from vpn_node_builder.core.workspace import PLACEHOLDER_CLOUD, PLACEHOLDER_NODE_TYPE
+from vpn_node_builder.core.workspace import (
+    PLACEHOLDER_CLOUD,
+    PLACEHOLDER_NODE_TYPE,
+    deployment_folder,
+)
 from vpn_node_builder.terraform.lifecycle import (
     terraform_apply,
     terraform_init,
@@ -145,6 +149,7 @@ def deploy_node(
         )
         run_dir.mkdir(parents=True, exist_ok=True)
         env = ctx.environ
+        base_name = deployment_folder(validated.workspace)
         env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
 
         if no_idle_shutdown:
@@ -177,6 +182,7 @@ def deploy_node(
         set_cloud_region(
             cloud,
             region,
+            base_name=base_name,
             backend=validated.backend,
             session=ctx.session,
             environ=env,
@@ -195,6 +201,7 @@ def deploy_node(
                 node_type=validated.node_type,
                 cloud=cloud,
                 region=region,
+                base_name=base_name,
                 template_dir=validated.template_dir,
                 work_dir=run_dir,
                 backend=validated.backend,
@@ -206,6 +213,7 @@ def deploy_node(
                 node_type=validated.node_type,
                 cloud=cloud,
                 region=region,
+                base_name=base_name,
                 template_dir=validated.template_dir,
                 work_dir=run_dir,
                 backend=validated.backend,

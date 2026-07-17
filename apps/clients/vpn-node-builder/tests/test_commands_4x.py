@@ -45,6 +45,7 @@ def test_cli_lists_all_commands() -> None:
         "show-regions",
         "deploy-node",
         "destroy-node",
+        "destroy-all",
         "reinit-node",
         "download-vpn-config",
         "start-tunnel",
@@ -101,6 +102,48 @@ def test_resolve_deployment_requires_region(tmp_path: Path, monkeypatch) -> None
         ctx, node_type="sandbox", cloud=CLOUD_VAGRANT_VBOX, region=None
     )
     assert run_dir == validated.workspace_dir
+
+
+def test_destroy_all_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from vpn_node_builder.commands import destroy_all as da
+
+    work = tmp_path / "MyProj"
+    root = work / ".workspace" / "run"
+    root.mkdir(parents=True)
+
+    class _Workspace:
+        working_dir = work
+        workspace_root = root
+
+    class _Ctx:
+        workspace = _Workspace()
+        environ = {"AWS_ACCESS_KEY": "a", "AWS_SECRET_KEY": "b"}
+        session = object()
+
+    monkeypatch.setattr(da, "prepare_command_context", lambda *a, **k: _Ctx())
+    monkeypatch.setattr(
+        da, "iter_deployed_configs", lambda *a, **k: [("sandbox", "aws", "us-east-1")]
+    )
+    destroyed: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        da,
+        "destroy_deployment",
+        lambda c, *, node_type, cloud, region: destroyed.append(
+            (node_type, cloud, region)
+        ),
+    )
+    deleted: list[tuple[str, str, str | None]] = []
+
+    def fake_delete(backend, *, base_name, region, environ, session):
+        deleted.append((backend, base_name, region))
+        return f"s3://vpnb-{base_name}-{region}"
+
+    monkeypatch.setattr(da, "delete_backend_resources", fake_delete)
+
+    result = runner.invoke(app, ["destroy-all", "-y"], env={SKIP_EULA_ENV: "1"})
+    assert result.exit_code == 0, result.output
+    assert destroyed == [("sandbox", "aws", "us-east-1")]
+    assert deleted == [("s3", "myproj", "us-east-1")]
 
 
 def test_start_tunnel_rejects_bad_type() -> None:

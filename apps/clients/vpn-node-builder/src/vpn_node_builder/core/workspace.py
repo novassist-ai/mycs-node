@@ -105,6 +105,50 @@ def list_child_dirs(path: Path) -> list[str]:
     return sorted(entry.name for entry in path.iterdir() if entry.is_dir())
 
 
+def deployment_folder(workspace: WorkspaceContext) -> str:
+    """Workspace folder name (lowercased) used to derive names and state storage."""
+    return workspace.working_dir.name.lower()
+
+
+def deployment_name(folder: str, cloud: str, region: str | None) -> str:
+    """Derive ``TF_VAR_name`` as ``<folder>-<cloud>[-<region>]`` (lowercased).
+
+    Region-less clouds omit the region suffix.
+    """
+    base = f"{folder}-{cloud}"
+    return f"{base}-{region}".lower() if region else base.lower()
+
+
+def iter_deployed_configs(
+    workspace_root: Path,
+    environ: dict[str, str] | None = None,
+) -> list[tuple[str, str, str | None]]:
+    """Return ``(node_type, cloud, region)`` for each deployed run directory.
+
+    A run directory counts as deployed when it holds ``output.json`` or an
+    initialized ``.terraform`` directory. Region-less clouds yield ``None``.
+    """
+    configs: list[tuple[str, str, str | None]] = []
+    if not workspace_root.is_dir():
+        return configs
+    without_regions = clouds_without_regions(environ)
+
+    def _is_deployed(run_dir: Path) -> bool:
+        return (run_dir / "output.json").exists() or (run_dir / ".terraform").is_dir()
+
+    for node_dir in sorted(p for p in workspace_root.iterdir() if p.is_dir()):
+        for cloud_dir in sorted(p for p in node_dir.iterdir() if p.is_dir()):
+            cloud = cloud_dir.name
+            if cloud in without_regions:
+                if _is_deployed(cloud_dir):
+                    configs.append((node_dir.name, cloud, None))
+                continue
+            for region_dir in sorted(p for p in cloud_dir.iterdir() if p.is_dir()):
+                if _is_deployed(region_dir):
+                    configs.append((node_dir.name, cloud, region_dir.name))
+    return configs
+
+
 def ensure_template_links(template_dir: Path, recipes_source: Path) -> None:
     """Create ``template_dir`` and symlink each recipe family from the cookbook."""
     template_dir.mkdir(parents=True, exist_ok=True)

@@ -53,7 +53,8 @@ PYTHONPATH=src pytest
 vpnb init
 ```
 
-Then set at least `TF_VAR_name` and the credentials for the clouds you use.
+Then set the credentials for the clouds you use (the deployment name is derived
+from the project directory name, so `TF_VAR_name` is not set here).
 Files must live in the **current working directory** (mounted as `/work` in
 Docker for end users).
 
@@ -85,7 +86,9 @@ vpnb show-regions aws
 
 ### Backend / state bucket failures
 
-- Set `TF_VAR_name` in `build-vars.sh`.
+- State storage is per cloud **and region**: bucket `vpnb-<folder>-<region>`
+  (S3/GCS) or storage account `vpnb<folder><region>` (Azure), where `<folder>`
+  is the project directory name. State keys are `<node_type>`.
 - Credentials must allow creating the state bucket (S3), storage account
   (Azure), or GCS bucket.
 - Local targets (`vagrant-vbox`, `docker`) use the `local` backend;

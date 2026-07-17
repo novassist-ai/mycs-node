@@ -42,6 +42,7 @@ def terraform_init(
     node_type: str,
     cloud: str,
     region: str | None,
+    base_name: str,
     template_dir: Path,
     work_dir: Path,
     backend: str | None,
@@ -52,12 +53,17 @@ def terraform_init(
     backend_name = backend or ""
     if backend_name in {"s3", "azurerm", "gcs"}:
         ensure_backend_resources(
-            backend_name, region=region, environ=environ, session=session
+            backend_name,
+            region=region,
+            base_name=base_name,
+            environ=environ,
+            session=session,
         )
     config = build_backend_config(
         backend_name,
         node_type=node_type,
         region=region,
+        base_name=base_name,
         environ=environ,
     )
     args = ["init", "-reconfigure", *config.args] if config.args else ["init"]

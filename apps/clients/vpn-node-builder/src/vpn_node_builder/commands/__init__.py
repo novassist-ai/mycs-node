@@ -6,6 +6,7 @@ import typer
 
 from vpn_node_builder.commands import (
     deploy_node,
+    destroy_all,
     destroy_node,
     doctor,
     download_vpn_config,
@@ -23,6 +24,7 @@ def register_commands(app: typer.Typer) -> None:
     app.command("deploy-node")(deploy_node.deploy_node)
     app.command("reinit-node")(destroy_node.reinit_node)
     app.command("destroy-node")(destroy_node.destroy_node)
+    app.command("destroy-all")(destroy_all.destroy_all)
     app.command("download-vpn-config")(download_vpn_config.download_vpn_config)
     app.command("start-tunnel")(start_tunnel.start_tunnel)
     app.command("show-nodes")(show_nodes.show_nodes)
