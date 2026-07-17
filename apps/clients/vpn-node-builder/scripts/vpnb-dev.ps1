@@ -45,9 +45,14 @@ if ($NbArgs.Count -ge 1 -and $NbArgs[0] -eq "update") {
 
 Ensure-Image
 
+# Host directory name so the in-container CLI can derive a stable workspace name.
+$WorkspaceName = if ($env:VPNB_WORKSPACE_NAME) { $env:VPNB_WORKSPACE_NAME }
+                 else { Split-Path -Leaf (Get-Location).Path }
+
 $dockerArgs = @(
     "run", "--privileged", "--rm", "-it",
     "-p", "4495:4495", "-p", "4495:4495/udp",
+    "-e", "VPNB_WORKSPACE_NAME=${WorkspaceName}",
     "-v", "${PWD}:/work",
     "-w", "/work",
     $Image

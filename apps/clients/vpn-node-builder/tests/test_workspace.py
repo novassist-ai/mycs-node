@@ -6,6 +6,7 @@ import pytest
 
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import (
+    deployment_folder,
     deployment_name,
     ensure_template_links,
     iter_deployed_configs,
@@ -17,6 +18,19 @@ from vpn_node_builder.core.workspace import (
 def test_deployment_name_with_and_without_region() -> None:
     assert deployment_name("MyProj", "aws", "us-east-1") == "myproj-aws-us-east-1"
     assert deployment_name("MyProj", "vagrant-vbox", None) == "myproj-vagrant-vbox"
+
+
+def test_deployment_folder_prefers_env_override_and_sanitizes() -> None:
+    from types import SimpleNamespace
+
+    workspace = SimpleNamespace(working_dir=Path("/work"))
+    # Docker case: /work dir name overridden by the launcher-provided host name.
+    assert (
+        deployment_folder(workspace, {"VPNB_WORKSPACE_NAME": "My Project_1"})
+        == "my-project-1"
+    )
+    # No override -> falls back to the working directory name.
+    assert deployment_folder(workspace, {}) == "work"
 
 
 def test_iter_deployed_configs(tmp_path: Path) -> None:

@@ -149,7 +149,7 @@ def deploy_node(
         )
         run_dir.mkdir(parents=True, exist_ok=True)
         env = ctx.environ
-        base_name = deployment_folder(validated.workspace)
+        base_name = deployment_folder(validated.workspace, env)
         env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
 
         if no_idle_shutdown:

@@ -105,9 +105,34 @@ def list_child_dirs(path: Path) -> list[str]:
     return sorted(entry.name for entry in path.iterdir() if entry.is_dir())
 
 
-def deployment_folder(workspace: WorkspaceContext) -> str:
-    """Workspace folder name (lowercased) used to derive names and state storage."""
-    return workspace.working_dir.name.lower()
+# Overrides the workspace name used for name/state derivation. Set by the Docker
+# launcher to the host directory's basename (the in-container working dir is the
+# fixed /work mount, so its name cannot be used); may also be set by the user.
+WORKSPACE_NAME_ENV = "VPNB_WORKSPACE_NAME"
+
+_WORKSPACE_NAME_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _sanitize_workspace_name(raw: str) -> str:
+    """Slugify to a bucket/DNS-safe token: lowercase, non-alnum -> ``-``, trimmed."""
+    return _WORKSPACE_NAME_RE.sub("-", raw.strip().lower()).strip("-")
+
+
+def deployment_folder(
+    workspace: WorkspaceContext,
+    environ: dict[str, str] | None = None,
+) -> str:
+    """Workspace name used to derive ``TF_VAR_name`` and state storage.
+
+    Prefers ``VPNB_WORKSPACE_NAME`` (set by the Docker launcher to the host
+    directory basename, or by the user) so containerized runs match native ones;
+    otherwise falls back to the working directory name. The result is slugified
+    to remain valid for S3/GCS bucket and DNS naming.
+    """
+    env = environ if environ is not None else dict(os.environ)
+    override = (env.get(WORKSPACE_NAME_ENV) or "").strip()
+    slug = _sanitize_workspace_name(override) if override else ""
+    return slug or _sanitize_workspace_name(workspace.working_dir.name)
 
 
 def deployment_name(folder: str, cloud: str, region: str | None) -> str:

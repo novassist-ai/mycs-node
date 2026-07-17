@@ -16,6 +16,7 @@ from vpn_node_builder.core.environment import (
 from vpn_node_builder.core.eula import is_eula_accepted
 from vpn_node_builder.core.paths import PathContext, resolve_paths
 from vpn_node_builder.core.workspace import (
+    WORKSPACE_NAME_ENV,
     deployment_folder,
     deployment_name,
     iter_deployed_configs,
@@ -60,6 +61,12 @@ def doctor() -> None:
 
     folder = deployment_folder(workspace)
     configs = iter_deployed_configs(workspace.workspace_root)
+
+    name_source = (
+        f"{WORKSPACE_NAME_ENV}" if os.environ.get(WORKSPACE_NAME_ENV, "").strip()
+        else "working dir name"
+    )
+    console.print(f"  workspace name: {folder} (from {name_source})")
 
     console.print("  state storage (derived, region-bound):")
     console.print(f"    - s3 / gcs bucket: vpnb-{folder}-<region>")
