@@ -12,6 +12,9 @@ WORK_MOUNT = Path("/work")
 # Environment override for cookbook location (dev + image).
 COOKBOOK_PATH_ENV = "VPNB_COOKBOOK_PATH"
 
+# Image-bundled cookbook path (Docker / packaged installs).
+IMAGE_COOKBOOK_ROOT = Path("/usr/local/lib/vpn-node-builder/cloud/cookbook")
+
 
 @dataclass(frozen=True)
 class PathContext:
@@ -22,6 +25,17 @@ class PathContext:
     recipes_root: Path
     work_mount: Path
     utils_bin: Path | None
+
+
+def running_in_docker() -> bool:
+    """Return True when the process is running inside a Docker (or similar) container."""
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "docker" in cgroup or "containerd" in cgroup or "/lxc/" in cgroup
 
 
 def find_repo_root(start: Path | None = None) -> Path | None:
@@ -49,8 +63,8 @@ def resolve_paths(
         cookbook_root = Path(override).expanduser().resolve()
     elif repo_root is not None:
         cookbook_root = repo_root / "cloud" / "cookbook"
-    elif Path("/usr/local/lib/vpn-node-builder/cloud/cookbook").is_dir():
-        cookbook_root = Path("/usr/local/lib/vpn-node-builder/cloud/cookbook")
+    elif IMAGE_COOKBOOK_ROOT.is_dir():
+        cookbook_root = IMAGE_COOKBOOK_ROOT
     else:
         # Fallback keeps the CLI importable before cookbook is present.
         cookbook_root = (repo_root or Path.cwd()) / "cloud" / "cookbook"

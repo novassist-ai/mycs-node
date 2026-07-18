@@ -235,6 +235,18 @@ Select a node, then an action:
 
 ## `vpnb doctor`
 
-Prints resolved repo/cookbook/workspace paths, EULA status, presence of control
-files, and whether required tools are on `PATH`. Soft checks only — exits `0`
-even when tools are missing so you can use it for diagnosis.
+Prints soft diagnostics (always exits `0`) to help debug path / cookbook /
+state issues:
+
+- **Runtime mode** — Docker vs native (and notes when `/work` is a host mount)
+- Paths, `VPNB_COOKBOOK_PATH` / `VPNB_WORKSPACE_NAME`, control files, tools
+- Available cookbook node types and `.workspace/templates` link health
+  (`ok` / `broken` / `stale` / `missing`), with a hint to
+  `rm -rf .workspace/templates` when links are unusable
+- Derived state bucket / VPC names
+- Credential completeness per cloud
+- Soft probe of state buckets for deployed regions (`exists` / `missing` /
+  `error`) — never creates or deletes storage
+
+Use this after switching between native and Docker, or when deploy lists
+`(none)` for node types.

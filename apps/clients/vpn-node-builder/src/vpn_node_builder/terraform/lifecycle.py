@@ -11,6 +11,7 @@ from pathlib import Path
 from rich.console import Console
 
 from vpn_node_builder.cloud.credentials import CloudSession
+from vpn_node_builder.core.debug import debug_detail, debug_step
 from vpn_node_builder.terraform.backend import (
     build_backend_config,
     ensure_backend_resources,
@@ -51,6 +52,10 @@ def terraform_init(
 ) -> None:
     _ = cloud
     backend_name = backend or ""
+    debug_step(
+        f"terraform init (backend={backend_name or 'none'}, "
+        f"node_type={node_type}, region={region or '-'})"
+    )
     if backend_name in {"s3", "azurerm", "gcs"}:
         ensure_backend_resources(
             backend_name,
@@ -66,6 +71,7 @@ def terraform_init(
         base_name=base_name,
         environ=environ,
     )
+    debug_detail(f"backend args: {' '.join(config.args) or '(none)'}")
     args = ["init", "-reconfigure", *config.args] if config.args else ["init"]
     run_terraform(
         args,
@@ -82,6 +88,7 @@ def terraform_plan(
     work_dir: Path,
     environ: MutableMapping[str, str],
 ) -> None:
+    debug_step("terraform plan")
     run_terraform_tee(
         ["plan"],
         template_dir=template_dir,
@@ -100,6 +107,7 @@ def terraform_apply(
 ) -> Path:
     start = time.time()
     apply_log = work_dir / "apply.log"
+    debug_step("terraform apply")
     # Stream full apply output (including Outputs:). Secrets must be marked
     # ``sensitive = true`` in cookbook / module outputs so Terraform redacts them.
     # Pass console_filter=compose_filters(...) here to filter apply console output.
@@ -159,6 +167,7 @@ def terraform_destroy(
     environ: MutableMapping[str, str],
 ) -> None:
     apply_log = work_dir / "apply.log"
+    debug_step("terraform destroy")
     run_terraform_tee(
         ["destroy", "-auto-approve"],
         template_dir=template_dir,
@@ -239,6 +248,10 @@ def terraform_taint_bastion(
 ) -> None:
     resources = taint_resources_from_input(
         template_dir, cloud, include_data_store=include_data_store
+    )
+    debug_step(
+        f"taint bastion resources "
+        f"(data_store={'yes' if include_data_store else 'no'}): {', '.join(resources)}"
     )
     for resource in resources:
         run_terraform(
