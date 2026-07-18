@@ -55,6 +55,37 @@ def test_probe_state_storage_local_skipped() -> None:
     assert "no remote" in detail
 
 
+def test_probe_state_storage_maps_aws_creds(monkeypatch) -> None:
+    """cloud-creds uses AWS_ACCESS_KEY; aws CLI needs AWS_ACCESS_KEY_ID."""
+    from vpn_node_builder.cloud.credentials import CloudSession
+    from vpn_node_builder.core.process import CommandResult
+    from vpn_node_builder.terraform.backend import probe_state_storage
+
+    seen_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        seen_env.update(kwargs.get("environ") or {})
+        return CommandResult(
+            args=tuple(args),
+            returncode=0,
+            stdout="2024-01-01 00:00:00 vpnb-demo-us-east-1\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("vpn_node_builder.terraform.backend.run_cmd", fake_run)
+    env = {"AWS_ACCESS_KEY": "AKIATEST", "AWS_SECRET_KEY": "secret"}
+    status, detail = probe_state_storage(
+        "s3",
+        base_name="demo",
+        region="us-east-1",
+        environ=env,
+        session=CloudSession(),
+    )
+    assert status == "exists"
+    assert seen_env.get("AWS_ACCESS_KEY_ID") == "AKIATEST"
+    assert seen_env.get("AWS_SECRET_ACCESS_KEY") == "secret"
+
+
 def test_set_debug_only_true() -> None:
     set_debug(True)
     assert is_debug() is True

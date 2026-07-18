@@ -263,10 +263,10 @@ def probe_state_storage(
     if not region:
         return "skipped", "region required for remote state probe"
 
-    env = dict(environ)
     try:
         if backend == "s3":
             ensure_cloud_cli("aws", session, environ)
+            env = dict(environ)
             bucket = state_bucket_name(base_name, region)
             listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
             if listed.returncode != 0:
@@ -277,6 +277,7 @@ def probe_state_storage(
 
         if backend == "azurerm":
             ensure_cloud_cli("azure", session, environ)
+            env = dict(environ)
             account = azure_storage_account_name(base_name, region)
             accounts = run_cmd(
                 ["az", "storage", "account", "list", "-o", "json"],
@@ -295,6 +296,7 @@ def probe_state_storage(
 
         # gcs
         ensure_cloud_cli("google", session, environ)
+        env = dict(environ)
         bucket = state_bucket_name(base_name, region)
         listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
         if listed.returncode != 0:
@@ -336,10 +338,9 @@ def delete_backend_resources(
     if backend not in {"s3", "azurerm", "gcs"}:
         return None
 
-    env = dict(environ)
-
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
+        env = dict(environ)
         bucket = state_bucket_name(base_name, region)
         debug_step(f"delete S3 state bucket s3://{bucket}")
         listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
@@ -354,6 +355,7 @@ def delete_backend_resources(
 
     if backend == "azurerm":
         ensure_cloud_cli("azure", session, environ)
+        env = dict(environ)
         storage_account = azure_storage_account_name(base_name, region)
         debug_step(f"delete Azure state account {storage_account}")
         accounts = run_cmd(
@@ -386,6 +388,7 @@ def delete_backend_resources(
 
     # gcs
     ensure_cloud_cli("google", session, environ)
+    env = dict(environ)
     bucket = state_bucket_name(base_name, region)
     debug_step(f"delete GCS state bucket gs://{bucket}")
     listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
@@ -438,14 +441,13 @@ def backend_state_exists(
     if cached is None:
         return None
     backend_type, config = cached
-    env = dict(environ)
 
     if backend_type == "s3":
         bucket = config.get("bucket")
         if not bucket:
             return None
         ensure_cloud_cli("aws", session, environ)
-        listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
+        listed = run_cmd(["aws", "s3", "ls"], environ=dict(environ), check=False)
         if listed.returncode != 0:
             return None
         return bucket in listed.stdout
@@ -455,7 +457,7 @@ def backend_state_exists(
         if not bucket:
             return None
         ensure_cloud_cli("google", session, environ)
-        listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
+        listed = run_cmd(["gsutil", "ls"], environ=dict(environ), check=False)
         if listed.returncode != 0:
             return None
         existing = {
@@ -473,7 +475,7 @@ def backend_state_exists(
         ensure_cloud_cli("azure", session, environ)
         accounts = run_cmd(
             ["az", "storage", "account", "list", "-o", "json"],
-            environ=env,
+            environ=dict(environ),
             check=False,
         )
         if accounts.returncode != 0:
