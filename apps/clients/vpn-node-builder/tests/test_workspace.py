@@ -113,6 +113,21 @@ def test_ensure_template_links_refreshes_stale_and_broken(tmp_path: Path) -> Non
     assert (template_dir / "sandbox").resolve() == (recipes / "sandbox").resolve()
 
 
+def test_inspect_template_links_reports_broken_and_ok(tmp_path: Path) -> None:
+    from vpn_node_builder.core.workspace import inspect_template_links
+
+    recipes = _make_recipes(tmp_path)
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    (template_dir / "sandbox").symlink_to(
+        Path("/missing/cookbook/recipes/sandbox"),
+        target_is_directory=True,
+    )
+    statuses = {s.name: s.status for s in inspect_template_links(template_dir, recipes)}
+    assert statuses["sandbox"] == "broken"
+    assert set(statuses) == {"sandbox"}
+
+
 def test_validate_workspace_happy_path(tmp_path: Path) -> None:
     recipes = _make_recipes(tmp_path)
     work = tmp_path / "project"

@@ -40,6 +40,21 @@ def test_friendly_fallback_keeps_command() -> None:
     assert "SomeUniqueUnmappedFailure XYZ" in msg
 
 
+def test_probe_state_storage_local_skipped() -> None:
+    from vpn_node_builder.cloud.credentials import CloudSession
+    from vpn_node_builder.terraform.backend import probe_state_storage
+
+    status, detail = probe_state_storage(
+        "local",
+        base_name="demo",
+        region=None,
+        environ={},
+        session=CloudSession(),
+    )
+    assert status == "skipped"
+    assert "no remote" in detail
+
+
 def test_set_debug_only_true() -> None:
     set_debug(True)
     assert is_debug() is True

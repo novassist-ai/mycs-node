@@ -2,11 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vpn_node_builder.core.paths import COOKBOOK_PATH_ENV, WORK_MOUNT, find_repo_root, resolve_paths
+from vpn_node_builder.core.paths import (
+    COOKBOOK_PATH_ENV,
+    WORK_MOUNT,
+    find_repo_root,
+    resolve_paths,
+    running_in_docker,
+)
 
 
 def test_work_mount_constant() -> None:
     assert WORK_MOUNT == Path("/work")
+
+
+def test_running_in_docker_is_bool() -> None:
+    assert isinstance(running_in_docker(), bool)
 
 
 def test_find_repo_root_from_vpn_node_builder(tmp_path: Path) -> None:

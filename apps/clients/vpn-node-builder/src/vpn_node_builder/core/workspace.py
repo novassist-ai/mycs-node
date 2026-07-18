@@ -105,6 +105,76 @@ def list_child_dirs(path: Path) -> list[str]:
     return sorted(entry.name for entry in path.iterdir() if entry.is_dir())
 
 
+@dataclass(frozen=True)
+class TemplateLinkStatus:
+    """Health of one recipe symlink under ``.workspace/templates``."""
+
+    name: str
+    status: str  # ok | broken | stale | missing
+    detail: str
+
+
+def inspect_template_links(
+    template_dir: Path,
+    recipes_source: Path,
+) -> list[TemplateLinkStatus]:
+    """Report whether each recipe link resolves to the current cookbook."""
+    results: list[TemplateLinkStatus] = []
+    recipe_names = list_child_dirs(recipes_source) if recipes_source.is_dir() else []
+    expected_by_name = {
+        name: (recipes_source / name).resolve() for name in recipe_names
+    }
+
+    existing: set[str] = set()
+    if template_dir.is_dir():
+        for entry in sorted(template_dir.iterdir()):
+            if entry.name.startswith("."):
+                continue
+            if not entry.is_symlink() and not entry.is_dir():
+                continue
+            existing.add(entry.name)
+            if entry.is_symlink():
+                try:
+                    current = entry.resolve(strict=True)
+                except (OSError, RuntimeError):
+                    results.append(
+                        TemplateLinkStatus(
+                            entry.name,
+                            "broken",
+                            f"symlink target missing: {entry.readlink()}",
+                        )
+                    )
+                    continue
+                expected = expected_by_name.get(entry.name)
+                if expected is not None and current != expected:
+                    results.append(
+                        TemplateLinkStatus(
+                            entry.name,
+                            "stale",
+                            f"points to {current} (expected {expected})",
+                        )
+                    )
+                else:
+                    results.append(
+                        TemplateLinkStatus(entry.name, "ok", str(current))
+                    )
+            elif entry.is_dir():
+                results.append(
+                    TemplateLinkStatus(entry.name, "ok", f"directory {entry}")
+                )
+
+    for name in recipe_names:
+        if name not in existing:
+            results.append(
+                TemplateLinkStatus(
+                    name,
+                    "missing",
+                    "no symlink in templates (created on next command)",
+                )
+            )
+    return results
+
+
 # Overrides the workspace name used for name/state derivation. Set by the Docker
 # launcher to the host directory's basename (the in-container working dir is the
 # fixed /work mount, so its name cannot be used); may also be set by the user.

@@ -245,6 +245,75 @@ def ensure_backend_resources(
         return
 
 
+def probe_state_storage(
+    backend: str,
+    *,
+    base_name: str,
+    region: str | None,
+    environ: MutableMapping[str, str],
+    session: CloudSession,
+) -> tuple[str, str]:
+    """Soft-check whether remote state storage exists (never creates/deletes).
+
+    Returns ``(status, detail)`` where status is one of:
+    ``exists``, ``missing``, ``skipped``, ``error``.
+    """
+    if backend not in {"s3", "azurerm", "gcs"}:
+        return "skipped", f"backend {backend!r} has no remote state bucket"
+    if not region:
+        return "skipped", "region required for remote state probe"
+
+    env = dict(environ)
+    try:
+        if backend == "s3":
+            ensure_cloud_cli("aws", session, environ)
+            bucket = state_bucket_name(base_name, region)
+            listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
+            if listed.returncode != 0:
+                return "error", (listed.stderr or listed.stdout or "aws s3 ls failed").strip()
+            if bucket in listed.stdout:
+                return "exists", f"s3://{bucket}"
+            return "missing", f"s3://{bucket} (can be created on next deploy -i)"
+
+        if backend == "azurerm":
+            ensure_cloud_cli("azure", session, environ)
+            account = azure_storage_account_name(base_name, region)
+            accounts = run_cmd(
+                ["az", "storage", "account", "list", "-o", "json"],
+                environ=env,
+                check=False,
+            )
+            if accounts.returncode != 0:
+                return "error", (accounts.stderr or accounts.stdout or "az list failed").strip()
+            names = {a.get("name") for a in json.loads(accounts.stdout or "[]")}
+            container = azure_container_name(base_name)
+            if account in names:
+                return "exists", f"account {account}, container {container}"
+            return "missing", (
+                f"account {account} (can be created on next deploy -i)"
+            )
+
+        # gcs
+        ensure_cloud_cli("google", session, environ)
+        bucket = state_bucket_name(base_name, region)
+        listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
+        if listed.returncode != 0:
+            return "error", (listed.stderr or listed.stdout or "gsutil ls failed").strip()
+        existing = {
+            part
+            for line in listed.stdout.splitlines()
+            for part in [line.strip().rstrip("/").split("/")[-1]]
+            if part
+        }
+        if bucket in existing:
+            return "exists", f"gs://{bucket}"
+        return "missing", f"gs://{bucket} (can be created on next deploy -i)"
+    except VpnNodeBuilderError as exc:
+        return "error", str(exc)
+    except Exception as exc:  # noqa: BLE001 - doctor must never crash on probes
+        return "error", str(exc)
+
+
 def delete_backend_resources(
     backend: str,
     *,
