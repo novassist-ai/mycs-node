@@ -93,6 +93,24 @@ def test_ensure_template_links_idempotent(tmp_path: Path) -> None:
     ensure_template_links(template_dir, recipes)
     ensure_template_links(template_dir, recipes)
     assert (template_dir / "sandbox").is_symlink()
+    assert (template_dir / "sandbox").resolve() == (recipes / "sandbox").resolve()
+
+
+def test_ensure_template_links_refreshes_stale_and_broken(tmp_path: Path) -> None:
+    recipes = _make_recipes(tmp_path)
+    other = _make_recipes(tmp_path / "other")
+    template_dir = tmp_path / "templates"
+    template_dir.mkdir()
+    # Broken Docker-era link.
+    (template_dir / "sandbox").symlink_to(
+        Path("/usr/local/lib/vpn-node-builder/cloud/cookbook/recipes/sandbox"),
+        target_is_directory=True,
+    )
+    ensure_template_links(template_dir, other)
+    assert (template_dir / "sandbox").resolve() == (other / "sandbox").resolve()
+    # Stale link pointing at a different cookbook is refreshed on the next call.
+    ensure_template_links(template_dir, recipes)
+    assert (template_dir / "sandbox").resolve() == (recipes / "sandbox").resolve()
 
 
 def test_validate_workspace_happy_path(tmp_path: Path) -> None:

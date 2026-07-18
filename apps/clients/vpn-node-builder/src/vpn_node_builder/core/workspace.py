@@ -175,7 +175,13 @@ def iter_deployed_configs(
 
 
 def ensure_template_links(template_dir: Path, recipes_source: Path) -> None:
-    """Create ``template_dir`` and symlink each recipe family from the cookbook."""
+    """Create / refresh recipe-family symlinks under ``template_dir``.
+
+    Existing symlinks that are broken or point at a different cookbook path are
+    replaced so switching between Docker (``/usr/local/lib/...``) and a native
+    ``VPNB_COOKBOOK_PATH`` keeps node types discoverable. Real directories are left
+    alone.
+    """
     template_dir.mkdir(parents=True, exist_ok=True)
     if not recipes_source.is_dir():
         raise VpnNodeBuilderError(
@@ -185,9 +191,18 @@ def ensure_template_links(template_dir: Path, recipes_source: Path) -> None:
         if not entry.is_dir():
             continue
         target = template_dir / entry.name
-        if target.exists() or target.is_symlink():
+        expected = entry.resolve()
+        if target.is_symlink():
+            try:
+                current = target.resolve(strict=True)
+            except (OSError, RuntimeError):
+                current = None
+            if current == expected:
+                continue
+            target.unlink()
+        elif target.exists():
             continue
-        target.symlink_to(entry.resolve(), target_is_directory=True)
+        target.symlink_to(expected, target_is_directory=True)
 
 
 def set_working_dir(
@@ -215,14 +230,12 @@ def set_working_dir(
         recipes_source = paths.recipes_root
 
     template_dir = working_dir / ".workspace" / "templates"
-    if not template_dir.exists():
-        template_dir.mkdir(parents=True, exist_ok=True)
-        # Link recipes when available (in-repo, VPNB_COOKBOOK_PATH, or image path).
-        # Init is allowed before the cookbook is resolvable; deploy validates later.
-        if recipes_source.is_dir():
-            ensure_template_links(template_dir, recipes_source)
-    else:
-        template_dir.mkdir(parents=True, exist_ok=True)
+    template_dir.mkdir(parents=True, exist_ok=True)
+    # Link / refresh recipes when available (in-repo, VPNB_COOKBOOK_PATH, or
+    # image path). Init is allowed before the cookbook is resolvable; deploy
+    # validates later. Refreshing also repairs stale Docker-era links.
+    if recipes_source.is_dir():
+        ensure_template_links(template_dir, recipes_source)
 
     return WorkspaceContext(
         working_dir=working_dir,

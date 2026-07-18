@@ -94,6 +94,11 @@ vpnb show-regions aws
   host folder name (the mount is always `/work`, so the container directory name
   cannot be used). If bucket names look wrong (e.g. `vpnb-work-...`), check
   `vpnb doctor` → "workspace name" and set `VPNB_WORKSPACE_NAME` explicitly.
+- If create-bucket fails with a “conflicting conditional operation” /
+  `OperationAborted` message, the bucket was usually deleted recently and the
+  name is not reusable yet — wait a few minutes and retry.
+- Use `-d/--debug` to print labeled process steps (`>> …`) and command traces
+  (`+ …`), plus raw CLI output on failures.
 - Credentials must allow creating the state bucket (S3), storage account
   (Azure), or GCS bucket.
 - Local targets (`vagrant-vbox`, `docker`) use the `local` backend;

@@ -13,7 +13,7 @@ from vpn_node_builder.commands._context import (
     resolve_deployment,
 )
 from vpn_node_builder.core.cli_options import resolve_option
-from vpn_node_builder.core.debug import set_debug
+from vpn_node_builder.core.debug import debug_detail, debug_step, set_debug
 from vpn_node_builder.core.environment import source_shell_files
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import (
@@ -139,6 +139,7 @@ def deploy_node(
     dev = resolve_option(dev, False)
     set_debug(debug)
     try:
+        debug_step("prepare workspace and environment")
         ctx = prepare_command_context()
         validated, run_dir = resolve_deployment(
             ctx,
@@ -150,6 +151,10 @@ def deploy_node(
         run_dir.mkdir(parents=True, exist_ok=True)
         env = ctx.environ
         base_name = deployment_folder(validated.workspace, env)
+        debug_detail(
+            f"workspace={base_name} backend={validated.backend} "
+            f"run_dir={run_dir} name={env.get('TF_VAR_name', '(pending)')}"
+        )
         env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
 
         if no_idle_shutdown:
@@ -169,6 +174,10 @@ def deploy_node(
                     f"\n[green bold]Deploying recipe with inputs from node "
                     f"'{validated.input_node}'...[/green bold]\n"
                 )
+            debug_step(
+                f"load dependent inputs from "
+                f"{validated.input_node}/{validated.input_node_cloud}"
+            )
             _write_dependent_inputs(
                 run_dir=run_dir,
                 workspace_root=validated.workspace.workspace_root,
@@ -179,6 +188,7 @@ def deploy_node(
                 verbose=dev,
             )
 
+        debug_step(f"set cloud region ({cloud}/{region or '-'})")
         set_cloud_region(
             cloud,
             region,
@@ -187,9 +197,11 @@ def deploy_node(
             session=ctx.session,
             environ=env,
         )
+        debug_detail(f"TF_VAR_name={env.get('TF_VAR_name')}")
 
         tf_dir = run_dir / ".terraform"
         if clean:
+            debug_step("clean terraform workspace context")
             for path in run_dir.glob(".terraform*"):
                 if path.is_dir():
                     import shutil
@@ -220,6 +232,8 @@ def deploy_node(
                 session=ctx.session,
                 environ=env,
             )
+        else:
+            debug_detail("skipping terraform init (.terraform already present)")
 
         if rebuild or upgrade:
             terraform_taint_bastion(

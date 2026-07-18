@@ -15,7 +15,7 @@ from vpn_node_builder.commands._context import (
     resolve_deployment,
 )
 from vpn_node_builder.core.cli_options import resolve_option
-from vpn_node_builder.core.debug import set_debug
+from vpn_node_builder.core.debug import debug_detail, debug_step, set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import (
     PLACEHOLDER_CLOUD,
@@ -66,9 +66,13 @@ def destroy_deployment(
         session=ctx.session,
         environ=env,
     )
-    if backend_state_exists(run_dir, environ=env, session=ctx.session) is False:
+    exists = backend_state_exists(run_dir, environ=env, session=ctx.session)
+    if exists is False:
+        debug_step("remote state storage missing; removing stale local run dir")
         shutil.rmtree(run_dir, ignore_errors=True)
         return MISSING_STATE
+    debug_step(f"destroy {node_type}/{cloud}/{region or '-'}")
+    debug_detail(f"TF_VAR_name={env.get('TF_VAR_name')} run_dir={run_dir}")
     terraform_destroy(
         template_dir=validated.template_dir,
         work_dir=run_dir,

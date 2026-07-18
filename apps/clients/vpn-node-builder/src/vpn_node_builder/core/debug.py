@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 _DEBUG = False
 
 
@@ -17,3 +19,15 @@ def set_debug(enabled: bool) -> None:
 
 def is_debug() -> bool:
     return _DEBUG
+
+
+def debug_step(message: str) -> None:
+    """Print a labeled process step when ``--debug`` is enabled."""
+    if _DEBUG:
+        print(f">> {message}", file=sys.stderr, flush=True)
+
+
+def debug_detail(message: str) -> None:
+    """Print secondary debug detail (indented) when ``--debug`` is enabled."""
+    if _DEBUG:
+        print(f"   {message}", file=sys.stderr, flush=True)

@@ -16,7 +16,7 @@ from vpn_node_builder.commands.destroy_node import (
 )
 from vpn_node_builder.core.cli_options import resolve_option
 from vpn_node_builder.core.credentials import REQUIRED_CREDENTIALS
-from vpn_node_builder.core.debug import set_debug
+from vpn_node_builder.core.debug import debug_step, set_debug
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.workspace import deployment_folder, iter_deployed_configs
 from vpn_node_builder.terraform.backend import delete_backend_resources
@@ -125,6 +125,7 @@ def destroy_all(
         for cloud, region in state_targets:
             backend = _CLOUD_BACKEND[cloud]
             label = f"{cloud}" + (f"/{region}" if region else "")
+            debug_step(f"delete state storage for {label}")
             try:
                 deleted = delete_backend_resources(
                     backend,

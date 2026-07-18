@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from vpn_node_builder.cloud.credentials import CloudSession, ensure_cloud_cli
+from vpn_node_builder.core.debug import debug_detail, debug_step
 from vpn_node_builder.core.errors import VpnNodeBuilderError
 from vpn_node_builder.core.process import run_cmd
 
@@ -128,16 +129,24 @@ def ensure_backend_resources(
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
         bucket = state_bucket_name(base_name, region)
+        debug_step(f"ensure S3 state bucket s3://{bucket} (region={region})")
         listed = run_cmd(["aws", "s3", "ls"], environ=dict(environ), check=False)
         if bucket not in listed.stdout:
+            debug_detail(f"creating bucket s3://{bucket}")
             run_cmd(
                 ["aws", "s3", "mb", f"s3://{bucket}", "--region", str(region)],
                 environ=dict(environ),
             )
+        else:
+            debug_detail(f"bucket already present: s3://{bucket}")
         return
 
     if backend == "azurerm":
         ensure_cloud_cli("azure", session, environ)
+        debug_step(
+            "ensure Azure state account "
+            f"{azure_storage_account_name(base_name, region)} (region={region})"
+        )
         groups = run_cmd(
             ["az", "group", "list", "-o", "json"],
             environ=dict(environ),
@@ -220,6 +229,7 @@ def ensure_backend_resources(
     if backend == "gcs":
         ensure_cloud_cli("google", session, environ)
         bucket = state_bucket_name(base_name, region)
+        debug_step(f"ensure GCS state bucket gs://{bucket} (region={region})")
         listed = run_cmd(["gsutil", "ls"], environ=dict(environ), check=False)
         existing = {
             part
@@ -262,8 +272,10 @@ def delete_backend_resources(
     if backend == "s3":
         ensure_cloud_cli("aws", session, environ)
         bucket = state_bucket_name(base_name, region)
+        debug_step(f"delete S3 state bucket s3://{bucket}")
         listed = run_cmd(["aws", "s3", "ls"], environ=env, check=False)
         if bucket not in listed.stdout:
+            debug_detail("bucket not found; nothing to delete")
             return None
         run_cmd(
             ["aws", "s3", "rb", f"s3://{bucket}", "--force"],
@@ -274,6 +286,7 @@ def delete_backend_resources(
     if backend == "azurerm":
         ensure_cloud_cli("azure", session, environ)
         storage_account = azure_storage_account_name(base_name, region)
+        debug_step(f"delete Azure state account {storage_account}")
         accounts = run_cmd(
             ["az", "storage", "account", "list", "-o", "json"],
             environ=env,
@@ -305,6 +318,7 @@ def delete_backend_resources(
     # gcs
     ensure_cloud_cli("google", session, environ)
     bucket = state_bucket_name(base_name, region)
+    debug_step(f"delete GCS state bucket gs://{bucket}")
     listed = run_cmd(["gsutil", "ls"], environ=env, check=False)
     existing = {
         part
