@@ -42,6 +42,9 @@ All build wrappers live under `build/`. Each script prepares `.download/`, invok
 | `build-google-image.sh` | Google Compute Engine | `packer/build-google.pkr.hcl` | `amd64` | `ubuntu-2204-lts` family |
 | `build-azure-image.sh` | Azure managed image | `packer/build-azure.pkr.hcl` | `amd64` | Canonical Ubuntu 22.04 LTS Gen2 |
 | `build-ovh-image.sh` | OVH Public Cloud (OpenStack) | `packer/build-openstack.pkr.hcl` | `amd64` (`d2-2`) | OVH `Ubuntu 24.04` Glance image |
+| `build-qcow2-image.sh` | Local KVM/qcow2 (OpenStack/CloudStack track) | `packer/build-qcow2.pkr.hcl` | host arch (`amd64` or `arm64`) | Ubuntu `resolute` cloudimg |
+| `publish-qcow2-image.sh` | Upload qcow2 to `novassist-public` + latest redirect | — | — | — |
+| `delete-qcow2-images.sh` | List/delete qcow2 objects under S3 channel/arch prefix | — | — | — |
 | `build-vagrant-image.sh` | Vagrant Cloud box | `packer/build-vagrant.pkr.hcl` | `amd64` | `ubuntu/jammy64` |
 
 **Publish scripts** copy built images to additional regions:
@@ -67,7 +70,7 @@ OVH-specific helpers: `scripts/ovh/common.sh` (OpenStack auth, image naming, ID 
 
 ## Packer Templates
 
-Primary manifests are HCL (`packer/*.pkr.hcl`); legacy JSON equivalents exist for some targets.
+Primary manifests are HCL (`packer/*.pkr.hcl`).
 
 Every public-cloud template uses the **same provisioner sequence**:
 

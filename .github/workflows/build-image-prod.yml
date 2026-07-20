@@ -106,6 +106,69 @@ jobs:
         run: |
           build/publish-aws-image.sh us-east-1 "$VERSION"
 
+  build-qcow2-image:
+    needs: create-release-tag
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    env:
+      # Public qcow2 artifacts live in novassist-public (same DEV keys as local/dev uploads).
+      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      QCOW2_S3_BUCKET: novassist-public
+      VERSION: ${{ needs.create-release-tag.outputs.version }}
+      IS_DEV_BUILD: "no"
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@v3
+
+      - name: Install QEMU and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-system-arm qemu-utils qemu-efi-aarch64 \
+            xorriso jq curl ca-certificates
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends gh
+          fi
+
+      - name: Check KVM (TCG fallback if unavailable)
+        run: |
+          if [[ -e /dev/kvm ]]; then
+            echo "KVM available at /dev/kvm"
+            ls -l /dev/kvm
+          else
+            echo "::warning::/dev/kvm not present; using QCOW2_ALLOW_TCG=1 (slower)"
+            echo "QCOW2_ALLOW_TCG=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build qcow2
+        run: |
+          build/build-qcow2-image.sh "$VERSION" "${{ matrix.arch }}"
+
+      - name: Publish qcow2 to S3
+        run: |
+          build/publish-qcow2-image.sh "$VERSION" "${{ matrix.arch }}" prod
+
   tag_prod_build:
     needs:
       - create-release-tag

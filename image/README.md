@@ -54,7 +54,7 @@ For build-time vs runtime details see [docs/build-design.md](docs/build-design.m
 ```
 mycs-node/image/
 ├── build/                      # Cloud-specific build, publish, delete wrappers
-├── packer/                     # Packer manifests (HCL; JSON legacy equivalents)
+├── packer/                     # Packer manifests (HCL)
 ├── scripts/
 │   ├── config/                 # Bootstrap scripts → /usr/local/lib/cloud-inceptor/
 │   └── ovh/                    # OVH OpenStack build helpers
@@ -82,6 +82,7 @@ Ephemeral directories (not committed): `.download/` (mycs-node zip, API key), `.
 | Document | Description |
 |----------|-------------|
 | [docs/build-design.md](docs/build-design.md) | Packer flow, build scripts, `install_packages`, CI, build troubleshooting |
+| [docs/qcow2-build.md](docs/qcow2-build.md) | Standalone KVM/qcow2 build (OpenStack/CloudStack track); macOS/UTM setup |
 | [docs/runtime-bootstrap-design.md](docs/runtime-bootstrap-design.md) | `init_instance`, configure script order, idempotency |
 | [docs/network-design.md](docs/network-design.md) | Interfaces, nftables, routing, Docker bypass, VPN gateway NAT, network troubleshooting |
 | [docs/ipsec-vpn-connectivity-design.md](docs/ipsec-vpn-connectivity-design.md) | IPsec road-warrior + VPN gateway connectivity, Peer A/B, reachability |
@@ -104,6 +105,8 @@ Ephemeral directories (not committed): `.download/` (mycs-node zip, API key), `.
 | [Google Cloud SDK](https://cloud.google.com/sdk/) | GCP builds |
 | [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/) | Azure builds |
 | [OpenStack CLI](https://docs.openstack.org/python-openstackclient/) | OVHcloud builds |
+| [QEMU](https://www.qemu.org/) + Packer qemu plugin | Local KVM/qcow2 builds (`build-qcow2-image.sh`) |
+| [xorriso](https://www.gnu.org/software/xorriso/) | Cloud-init seed ISO for qcow2 builds |
 | [Vagrant](https://www.vagrantup.com/) + VirtualBox | Vagrant box builds |
 
 Initialize Packer plugins before the first build:
@@ -136,6 +139,7 @@ Dev builds require **AWS credentials** (even for GCP/Azure/OVH) to download S3 a
 | **Google** | `./build/build-google-image.sh 1.2.3` | `./build/publish-google-image.sh 1.2.3` |
 | **Azure** | `./build/build-azure-image.sh 1.2.3 eastus` | `./build/publish-azure-image.sh eastus 1.2.3 all` |
 | **OVHcloud** | `source openrc.sh && ./build/build-ovh-image.sh 1.2.3 UK1` | `./build/publish-ovh-image.sh UK1 1.2.3 all` |
+| **QCOW2 (KVM)** | `./build/build-qcow2-image.sh 1.2.3 [amd64\|arm64]` | `./build/publish-qcow2-image.sh 1.2.3 <arch> <dev\|prod>` |
 | **Vagrant** | `./build/build-vagrant-image.sh 1.2.3` | *(Vagrant Cloud)* |
 
 Image naming, credentials, and full option reference: [docs/build-design.md](docs/build-design.md).

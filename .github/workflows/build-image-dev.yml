@@ -108,6 +108,73 @@ jobs:
           build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
             "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
+  build-qcow2-image:
+    needs: create-build-tag
+    if: github.ref == 'refs/heads/dev'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      QCOW2_S3_BUCKET: novassist-public
+      DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
+      IS_DEV_BUILD: yes
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@v3
+
+      - name: Install QEMU and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-system-arm qemu-utils qemu-efi-aarch64 \
+            xorriso jq curl ca-certificates
+          # GitHub CLI (release artifact download)
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends gh
+          fi
+
+      - name: Check KVM (TCG fallback if unavailable)
+        run: |
+          if [[ -e /dev/kvm ]]; then
+            echo "KVM available at /dev/kvm"
+            ls -l /dev/kvm
+          else
+            echo "::warning::/dev/kvm not present; using QCOW2_ALLOW_TCG=1 (slower)"
+            echo "QCOW2_ALLOW_TCG=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Delete prior qcow2 objects (dev, this arch)
+        run: |
+          build/delete-qcow2-images.sh --all dev "${{ matrix.arch }}"
+
+      - name: Build qcow2
+        run: |
+          build/build-qcow2-image.sh "$DEV_BUILD" "${{ matrix.arch }}"
+
+      - name: Publish qcow2 to S3
+        run: |
+          build/publish-qcow2-image.sh "$DEV_BUILD" "${{ matrix.arch }}" dev
+
   tag_dev_build:
     needs:
       - create-build-tag
