@@ -76,7 +76,7 @@ function ovh::build_image() {
   ovh::resolve_openstack_ids
 
   echo "Building image '${IMAGE_NAME}' in region '${OS_REGION_NAME}'..."
-  echo "  source image: ${OVH_SOURCE_IMAGE_NAME:-Ubuntu 24.04} (${OVH_SOURCE_IMAGE_ID})"
+  echo "  source image: ${OVH_SOURCE_IMAGE_NAME:-Ubuntu 26.04 - UEFI} (${OVH_SOURCE_IMAGE_ID})"
   echo "  flavor:       ${OVH_BUILD_FLAVOR:-d2-2} (${OVH_FLAVOR_ID})"
   echo "  network:      ${OVH_PUBLIC_NETWORK_NAME:-Ext-Net} (${OVH_NETWORK_ID})"
 
