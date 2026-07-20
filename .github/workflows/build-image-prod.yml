@@ -3,6 +3,14 @@ concurrency: build-image-prod
 
 on:
   workflow_dispatch:
+    inputs:
+      build_arm64:
+        description: Build arm64 qcow2 (skip by default — TCG is very slow without KVM on arm runners)
+        type: choice
+        options:
+          - skip
+          - build
+        default: skip
   push:
     branches: [main]
     paths:
@@ -106,17 +114,32 @@ jobs:
         run: |
           build/publish-aws-image.sh us-east-1 "$VERSION"
 
-  build-qcow2-image:
+  # Build matrix at runtime — job-level `if` cannot reference `matrix`.
+  qcow2-matrix:
     needs: create-release-tag
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - id: matrix
+        run: |
+          include='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
+          if [[ "${{ github.event.inputs.build_arm64 }}" == "build" ]]; then
+            include='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
+          fi
+          echo "include=${include}" >> "$GITHUB_OUTPUT"
+          echo "qcow2 matrix: ${include}"
+
+  build-qcow2-image:
+    needs:
+      - create-release-tag
+      - qcow2-matrix
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.qcow2-matrix.outputs.include) }}
     runs-on: ${{ matrix.runner }}
 
     defaults:

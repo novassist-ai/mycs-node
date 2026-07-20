@@ -152,7 +152,10 @@ Jobs `build-qcow2-image` in:
 | Arch | Runner |
 |------|--------|
 | `amd64` | `ubuntu-24.04` |
-| `arm64` | `ubuntu-24.04-arm` |
+| `arm64` | `ubuntu-24.04-arm` (opt-in) |
+
+Arm64 is **skipped by default** (hosted arm runners lack KVM; TCG is very slow).
+Enable it via workflow dispatch input `build_arm64=build`. Push events always skip arm64.
 
 ### S3 layout (`novassist-public`)
 

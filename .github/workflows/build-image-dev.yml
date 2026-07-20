@@ -3,6 +3,14 @@ concurrency: build-image-dev
 
 on:
   workflow_dispatch:
+    inputs:
+      build_arm64:
+        description: Build arm64 qcow2 (skip by default — TCG is very slow without KVM on arm runners)
+        type: choice
+        options:
+          - skip
+          - build
+        default: skip
   push:
     branches: [dev]
     paths:
@@ -73,53 +81,68 @@ jobs:
           echo "bastion_image_name=${bastion_image_name}" >> "$GITHUB_OUTPUT"
           echo "Dev bastion version: ${version} → ${bastion_image_name}"
 
-  # TEMP: AWS AMI build disabled while testing qcow2-only CI.
-  # build-aws-image:
-  #   needs: create-build-tag
-  #   if: github.ref == 'refs/heads/dev'
-  #   runs-on: ubuntu-latest
-  #
-  #   defaults:
-  #     run:
-  #       shell: bash
-  #       working-directory: image
-  #
-  #   env:
-  #     AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
-  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
-  #     AWS_DEFAULT_REGION: us-east-1
-  #     DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
-  #     IS_DEV_BUILD: yes
-  #
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Delete prior dev AMIs
-  #       run: |
-  #         # AWS AMI name filter is a glob → mycs-node-image_*-dev*
-  #         build/delete-aws-images.sh '*-dev*' "all"
-  #
-  #     - name: Run build
-  #       run: |
-  #         build/build-aws-image.sh us-east-1 "$DEV_BUILD"
-  #
-  #     - name: Publish image
-  #       run: |
-  #         build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
-  #           "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
+  build-aws-image:
+    needs: create-build-tag
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
+      IS_DEV_BUILD: yes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Delete prior dev AMIs
+        run: |
+          # AWS AMI name filter is a glob → mycs-node-image_*-dev*
+          build/delete-aws-images.sh '*-dev*' "all"
+
+      - name: Run build
+        run: |
+          build/build-aws-image.sh us-east-1 "$DEV_BUILD"
+
+      - name: Publish image
+        run: |
+          build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
+            "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
+
+  # Build matrix at runtime — job-level `if` cannot reference `matrix`.
+  qcow2-matrix:
+    needs: create-build-tag
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - id: matrix
+        run: |
+          include='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
+          # push has no inputs → skip; workflow_dispatch defaults to skip.
+          if [[ "${{ github.event.inputs.build_arm64 }}" == "build" ]]; then
+            include='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
+          fi
+          echo "include=${include}" >> "$GITHUB_OUTPUT"
+          echo "qcow2 matrix: ${include}"
 
   build-qcow2-image:
-    needs: create-build-tag
+    needs:
+      - create-build-tag
+      - qcow2-matrix
     if: github.ref == 'refs/heads/dev'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        include: ${{ fromJSON(needs.qcow2-matrix.outputs.include) }}
     runs-on: ${{ matrix.runner }}
 
     defaults:
@@ -199,12 +222,11 @@ jobs:
         run: |
           build/publish-qcow2-image.sh "$DEV_BUILD" "${{ matrix.arch }}" dev
 
-  # TEMP: skip tag/trigger while AWS AMI job is disabled (qcow2-only testing).
   tag_dev_build:
     needs:
       - create-build-tag
-      # - build-aws-image
-    if: false
+      - build-aws-image
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # Push only the build tag (not the branch): --follow-tags races with other pushes.
     permissions:
@@ -232,9 +254,9 @@ jobs:
   trigger-vpn-node-builder:
     needs:
       - create-build-tag
-      # - build-aws-image
+      - build-aws-image
       - tag_dev_build
-    if: false
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
 
     defaults:
