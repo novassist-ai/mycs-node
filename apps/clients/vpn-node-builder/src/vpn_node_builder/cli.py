@@ -6,7 +6,6 @@ import typer
 
 from vpn_node_builder import __version__
 from vpn_node_builder.commands import register_commands
-from vpn_node_builder.core.bastion import bastion_help_epilog
 
 app = typer.Typer(
     name="vpnb",
@@ -14,7 +13,6 @@ app = typer.Typer(
         "Manage personal cloud VPN nodes across multiple cloud regions. "
         "Use a subcommand such as init, show-regions, deploy-node, or show-nodes."
     ),
-    epilog=bastion_help_epilog(),
     no_args_is_help=True,
     add_completion=False,
 )
@@ -45,8 +43,6 @@ register_commands(app)
 
 def run() -> None:
     """Console-script entrypoint."""
-    # Refresh epilog so TF_VAR_bastion_image_name from the process env is current.
-    app.info.epilog = bastion_help_epilog()
     app()
 
 

@@ -106,8 +106,9 @@ The image is built with a default `TF_VAR_bastion_image_name` and cloud-specific
 | `TF_VAR_bastion_image_container` (Azure) | `nodeimage` | `nodeimage` |
 
 
-No `appbricks-*` image names are used. Top-level ``vpnb --help`` shows the
-bastion image name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`), plus publisher locators (`TF_VAR_bastion_image_owner`, GCS/Azure prefixes).
+No `appbricks-*` image names are used. `vpnb doctor` shows the bastion image
+name/pattern baked into the CLI/image (`TF_VAR_bastion_image_name`), plus
+publisher locators (`TF_VAR_bastion_image_owner`, GCS/Azure prefixes).
 
 On AWS the name is a **glob** (`*` / `?`), not a regex — e.g.
 `mycs-node-image_0.1.0-dev*` matches `mycs-node-image_0.1.0-dev0`. A regex-style

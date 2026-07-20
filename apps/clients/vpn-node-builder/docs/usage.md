@@ -239,6 +239,8 @@ Prints soft diagnostics (always exits `0`) to help debug path / cookbook /
 state issues:
 
 - **Runtime mode** — Docker vs native (and notes when `/work` is a host mount)
+- **Bastion image pattern** — effective `TF_VAR_bastion_image_name` from the
+  process environment and `build-vars.sh`
 - Paths, `VPNB_COOKBOOK_PATH` / `VPNB_WORKSPACE_NAME`, control files, tools
 - Available cookbook node types and `.workspace/templates` link health
   (`ok` / `broken` / `stale` / `missing`), with a hint to
