@@ -182,6 +182,14 @@ s3://novassist-public/mycs-releases/mycs-node/image/<channel>/<arch>/mycs-node-i
 so prior versions for that arch are removed. **Prod** does not delete prior
 versions (history accumulates); `--all` remains available for manual cleanup.
 
+## GitHub Actions notes
+
+On hosted Linux runners, enable nested KVM with GitHub’s udev rule (mode `0666`
+on `/dev/kvm`), then smoke-test `qemu-system-* -accel kvm` before Packer. If the
+smoke test fails, workflows set `QCOW2_ALLOW_TCG=1`. CI also caps guest RAM/CPUs
+(`QCOW2_MEMORY=4096`, `QCOW2_CPUS=2`) and sets `PACKER_LOG=1` so a failed QEMU
+launch prints qemu stderr in the job log.
+
 ### Local publish example
 
 ```bash
