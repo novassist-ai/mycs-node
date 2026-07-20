@@ -145,7 +145,9 @@ vpnb destroy-node <NODE_TYPE> <CLOUD> [-r REGION]
 ```
 
 `reinit-node` refreshes Terraform init / backend wiring without apply or destroy.
-`destroy-node` runs `terraform destroy` and removes `output.json`.
+`destroy-node` (and each node destroyed by `destroy-all`) runs
+`terraform init -reconfigure` first so providers/backend are current after
+Docker↔native switches, then `terraform destroy`, and removes `output.json`.
 
 | Option | Meaning |
 |--------|---------|
@@ -162,8 +164,9 @@ remove the state buckets.
 vpnb destroy-all [-y|--yes] [-d|--debug]
 ```
 
-Destroys every deployed node in the workspace, then deletes the per-region state
-bucket (`vpnb-<folder>-<region>`) for each configured cloud/region that had a
+Destroys every deployed node in the workspace (each with `terraform init`
+then `destroy`), then deletes the per-region state bucket
+(`vpnb-<folder>-<region>`) for each configured cloud/region that had a
 deployment. State buckets are only removed after all nodes destroy
 successfully; if any node fails, buckets are left in place so the run can be
 retried.

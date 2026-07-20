@@ -36,8 +36,9 @@ key derive from the folder + region + node type independently of `TF_VAR_name`.
 | `s3` / `gcs` | Bucket `vpnb-<folder>-<region>` (force) |
 | `azurerm` | Storage account `vpnb<folder><region>` (RG `default` kept) |
 
-`vpnb destroy-all` first destroys every deployed node in the workspace, then, for
-each configured cloud (credentials present in `cloud-creds.sh`), deletes the
+`vpnb destroy-all` first initializes and destroys every deployed node in the
+workspace (`terraform init -reconfigure` then `destroy`), then, for each
+configured cloud (credentials present in `cloud-creds.sh`), deletes the
 state bucket of every region that had a deployment (only if it exists).
 
 ## Console output filters
