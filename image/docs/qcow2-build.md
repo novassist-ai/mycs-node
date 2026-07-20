@@ -190,6 +190,10 @@ smoke test fails, workflows set `QCOW2_ALLOW_TCG=1`. CI also caps guest RAM/CPUs
 (`QCOW2_MEMORY=4096`, `QCOW2_CPUS=2`) and sets `PACKER_LOG=1` so a failed QEMU
 launch prints qemu stderr in the job log.
 
+Arm64 hosted runners lack nested KVM today, so that matrix leg uses TCG with
+`cortex-a72` + GICv3 (QEMU 8.2’s `-cpu max` crashes on FEAT_E0PD with newer
+Ubuntu kernels). Expect a much slower arm64 CI build than amd64+KVM.
+
 ### Local publish example
 
 ```bash

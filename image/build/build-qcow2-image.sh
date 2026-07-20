@@ -279,6 +279,13 @@ function qcow2::resolve_platform() {
     echo "WARNING: Using TCG software emulation for ${TARGET_ARCH} on ${HOST_ARCH} (slow)."
   fi
 
+  # QEMU 8.2 TCG + "-cpu max" advertises FEAT_E0PD; newer Ubuntu kernels trip a
+  # known assertion (regime_is_user). Use a concrete CPU / GICv3 for arm64 TCG.
+  if [[ $TARGET_ARCH == arm64 && $accel == tcg ]]; then
+    machine=virt,gic-version=3
+    cpu_model=cortex-a72
+  fi
+
   efi_fw=""
   efi_vars=""
   if [[ $efi_boot == true ]]; then
