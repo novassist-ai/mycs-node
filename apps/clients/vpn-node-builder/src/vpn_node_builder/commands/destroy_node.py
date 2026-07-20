@@ -46,6 +46,10 @@ def destroy_deployment(
     Returns ``DESTROYED`` normally, or ``MISSING_STATE`` when the remote state
     storage the node was initialized with no longer exists (in which case the
     stale local run directory is removed and no destroy is attempted).
+
+    When state storage is present, runs ``terraform init -reconfigure`` before
+    destroy so providers and backend wiring are current (e.g. after switching
+    between Docker and native hosts).
     """
     validated, run_dir = resolve_deployment(
         ctx,
@@ -58,10 +62,11 @@ def destroy_deployment(
     env = ctx.environ
     env["TF_VAR_cb_local_state_path"] = str(run_dir / "state")
     load_input_vars(run_dir, env)
+    base_name = deployment_folder(validated.workspace, env)
     set_cloud_region(
         cloud,
         region,
-        base_name=deployment_folder(validated.workspace, env),
+        base_name=base_name,
         backend=validated.backend,
         session=ctx.session,
         environ=env,
@@ -71,6 +76,18 @@ def destroy_deployment(
         debug_step("remote state storage missing; removing stale local run dir")
         shutil.rmtree(run_dir, ignore_errors=True)
         return MISSING_STATE
+    debug_step(f"init before destroy {node_type}/{cloud}/{region or '-'}")
+    terraform_init(
+        node_type=validated.node_type,
+        cloud=cloud,
+        region=region,
+        base_name=base_name,
+        template_dir=validated.template_dir,
+        work_dir=run_dir,
+        backend=validated.backend,
+        session=ctx.session,
+        environ=env,
+    )
     debug_step(f"destroy {node_type}/{cloud}/{region or '-'}")
     debug_detail(f"TF_VAR_name={env.get('TF_VAR_name')} run_dir={run_dir}")
     terraform_destroy(

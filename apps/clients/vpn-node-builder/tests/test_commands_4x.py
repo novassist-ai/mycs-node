@@ -104,6 +104,66 @@ def test_resolve_deployment_requires_region(tmp_path: Path, monkeypatch) -> None
     assert run_dir == validated.workspace_dir
 
 
+def test_destroy_deployment_inits_before_destroy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vpn_node_builder.commands import destroy_node as dn
+    from vpn_node_builder.commands._context import CommandContext
+    from vpn_node_builder.core.workspace import ValidatedWorkspace
+
+    work = _project_with_recipes(tmp_path)
+    monkeypatch.chdir(work)
+    monkeypatch.setenv(SKIP_EULA_ENV, "1")
+    monkeypatch.setenv("VPNB_COOKBOOK_PATH", str(tmp_path / "cloud" / "cookbook"))
+
+    ws = set_working_dir(cwd=work)
+    run_dir = ws.workspace_root / "sandbox" / "aws" / "us-east-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "output.json").write_text("{}", encoding="utf-8")
+
+    validated = ValidatedWorkspace(
+        workspace=ws,
+        node_type="sandbox",
+        cloud="aws",
+        region="us-east-1",
+        template_dir=ws.template_dir / "sandbox" / "aws",
+        workspace_dir=ws.workspace_root / "sandbox" / "aws",
+        backend="s3",
+        input_node=None,
+        input_node_cloud=None,
+        is_external_recipe=False,
+    )
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        dn,
+        "resolve_deployment",
+        lambda *a, **k: (validated, run_dir),
+    )
+    monkeypatch.setattr(dn, "require_run_dir", lambda *a, **k: None)
+    monkeypatch.setattr(dn, "load_input_vars", lambda *a, **k: None)
+    monkeypatch.setattr(dn, "set_cloud_region", lambda *a, **k: None)
+    monkeypatch.setattr(dn, "backend_state_exists", lambda *a, **k: True)
+    monkeypatch.setattr(
+        dn,
+        "terraform_init",
+        lambda **k: calls.append("init"),
+    )
+    monkeypatch.setattr(
+        dn,
+        "terraform_destroy",
+        lambda **k: calls.append("destroy"),
+    )
+
+    ctx = CommandContext(workspace=ws, environ={}, session=object())
+    status = dn.destroy_deployment(
+        ctx, node_type="sandbox", cloud="aws", region="us-east-1"
+    )
+    assert status == dn.DESTROYED
+    assert calls == ["init", "destroy"]
+
+
 def test_destroy_all_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from vpn_node_builder.commands import destroy_all as da
 

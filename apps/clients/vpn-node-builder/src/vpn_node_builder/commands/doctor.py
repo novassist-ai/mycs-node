@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 
 from vpn_node_builder.cloud.credentials import CloudSession
+from vpn_node_builder.core.bastion import BASTION_IMAGE_ENV, current_bastion_image_name
 from vpn_node_builder.core.credentials import REQUIRED_CREDENTIALS
 from vpn_node_builder.core.environment import (
     BUILD_VARS_FILENAME,
@@ -125,6 +126,16 @@ def doctor() -> None:
                 "Working directory is named 'work'; if this is unexpected, "
                 f"set {WORKSPACE_NAME_ENV} explicitly."
             )
+
+    # --- bastion image ---
+    image_name = current_bastion_image_name(environ)
+    _section("bastion image")
+    _item("image pattern", image_name or "(not set)")
+    if not image_name:
+        hints.append(
+            f"{BASTION_IMAGE_ENV} is not set (process env / build-vars.sh). "
+            "Deploys need a MyCS node image name or wildcard pattern."
+        )
 
     # --- paths ---
     cookbook_override = (environ.get(COOKBOOK_PATH_ENV) or "").strip()
