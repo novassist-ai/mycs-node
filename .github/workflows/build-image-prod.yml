@@ -217,6 +217,7 @@ jobs:
     needs:
       - create-release-tag
       - build-aws-image
+      - build-qcow2-image
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Push only the release tag (not the branch): --follow-tags races with other pushes.
@@ -246,6 +247,7 @@ jobs:
     needs:
       - create-release-tag
       - build-aws-image
+      - build-qcow2-image
       - tag_prod_build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest

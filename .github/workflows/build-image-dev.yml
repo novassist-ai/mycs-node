@@ -81,40 +81,40 @@ jobs:
           echo "bastion_image_name=${bastion_image_name}" >> "$GITHUB_OUTPUT"
           echo "Dev bastion version: ${version} → ${bastion_image_name}"
 
-  build-aws-image:
-    needs: create-build-tag
-    if: github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
+  # build-aws-image:
+  #   needs: create-build-tag
+  #   if: github.ref == 'refs/heads/dev'
+  #   runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        shell: bash
-        working-directory: image
+  #   defaults:
+  #     run:
+  #       shell: bash
+  #       working-directory: image
 
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: us-east-1
-      DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
-      IS_DEV_BUILD: yes
+  #   env:
+  #     AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+  #     AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+  #     AWS_DEFAULT_REGION: us-east-1
+  #     DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
+  #     IS_DEV_BUILD: yes
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Delete prior dev AMIs
-        run: |
-          # AWS AMI name filter is a glob → mycs-node-image_*-dev*
-          build/delete-aws-images.sh '*-dev*' "all"
+  #     - name: Delete prior dev AMIs
+  #       run: |
+  #         # AWS AMI name filter is a glob → mycs-node-image_*-dev*
+  #         build/delete-aws-images.sh '*-dev*' "all"
 
-      - name: Run build
-        run: |
-          build/build-aws-image.sh us-east-1 "$DEV_BUILD"
+  #     - name: Run build
+  #       run: |
+  #         build/build-aws-image.sh us-east-1 "$DEV_BUILD"
 
-      - name: Publish image
-        run: |
-          build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
-            "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
+  #     - name: Publish image
+  #       run: |
+  #         build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
+  #           "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
   # Build matrix at runtime — job-level `if` cannot reference `matrix`.
   qcow2-matrix:
@@ -225,7 +225,8 @@ jobs:
   tag_dev_build:
     needs:
       - create-build-tag
-      - build-aws-image
+      # - build-aws-image
+      - build-qcow2-image
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # Push only the build tag (not the branch): --follow-tags races with other pushes.
@@ -254,7 +255,8 @@ jobs:
   trigger-vpn-node-builder:
     needs:
       - create-build-tag
-      - build-aws-image
+      # - build-aws-image
+      - build-qcow2-image
       - tag_dev_build
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest

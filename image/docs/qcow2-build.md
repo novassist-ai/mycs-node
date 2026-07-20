@@ -162,16 +162,24 @@ Enable it via workflow dispatch input `build_arm64=build`. Push events always sk
 Credentials: `DEV_AWS_ACCESS_KEY_ID` / `DEV_AWS_SECRET_ACCESS_KEY` (dev **and** prod uploads).
 
 ```
-s3://novassist-public/mycs-releases/mycs-node/image/<channel>/<arch>/mycs-node-image_<VERSION>.qcow2
-s3://novassist-public/mycs-releases/mycs-node/image/<channel>/<arch>/mycs-node-image.qcow2
+s3://novassist-public/mycs-releases/mycs-node/image/<channel>/mycs-node-image_<VERSION>_<ARCH>.qcow2
+s3://novassist-public/mycs-releases/mycs-node/image/<channel>/mycs-node-image_latest_<ARCH>.qcow2
+```
+
+Example:
+
+```
+mycs-releases/mycs-node/image/dev/mycs-node-image_0.2.0-dev1_amd64.qcow2
+mycs-releases/mycs-node/image/dev/mycs-node-image_latest_amd64.qcow2
 ```
 
 - `<channel>` is `dev` or `prod`.
-- `<arch>` keeps both architectures from colliding while preserving the
-  `mycs-node-image_<VERSION>.qcow2` object name.
-- `mycs-node-image.qcow2` is a **0-byte** placeholder with
-  `x-amz-website-redirect-location` pointing at the versioned object
-  (website-style “latest” URL).
+- Arch is part of the object name (flat under the channel prefix).
+- `mycs-node-image_latest_<ARCH>.qcow2` is a **0-byte** placeholder with
+  `x-amz-website-redirect-location` pointing at the versioned object.
+- Uploads use `--acl public-read` (public HTTPS download via the S3 object URL).
+- Publish deletes any existing object at the same VERSION/ARCH key first so
+  workflow retries replace a prior upload cleanly.
 
 ### Scripts
 
@@ -184,6 +192,8 @@ s3://novassist-public/mycs-releases/mycs-node/image/<channel>/<arch>/mycs-node-i
 **Dev CI** runs `delete-qcow2-images.sh --all dev <arch>` before each arch upload
 so prior versions for that arch are removed. **Prod** does not delete prior
 versions (history accumulates); `--all` remains available for manual cleanup.
+
+Tag / release finalize jobs wait for **both** AWS AMI and qcow2 builds.
 
 ## GitHub Actions notes
 
