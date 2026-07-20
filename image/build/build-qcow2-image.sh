@@ -249,17 +249,19 @@ function qcow2::resolve_platform() {
       display_default=true
     elif [[ -r /dev/kvm && -w /dev/kvm ]]; then
       accel=kvm
-    elif [[ -e /dev/kvm ]]; then
-      echo "WARNING: /dev/kvm exists but is not readable/writable by $(id -un)."
-      echo "  Fix with: sudo chmod 666 /dev/kvm   (or add your user to group 'kvm')"
-      if [[ $QCOW2_ALLOW_TCG == 1 ]]; then
-        accel=tcg
-        cpu_model=max
-        echo "WARNING: Falling back to TCG software emulation."
+    elif [[ $QCOW2_ALLOW_TCG == 1 ]]; then
+      accel=tcg
+      cpu_model=max
+      if [[ -e /dev/kvm ]]; then
+        echo "WARNING: /dev/kvm exists but is not usable by $(id -un); using TCG."
       else
-        echo "ERROR! Cannot use KVM. Fix permissions or set QCOW2_ALLOW_TCG=1."
-        exit 1
+        echo "WARNING: /dev/kvm not present; using TCG software emulation (slow)."
       fi
+    elif [[ -e /dev/kvm ]]; then
+      echo "ERROR! /dev/kvm exists but is not readable/writable by $(id -un)."
+      echo "  Fix with: sudo chmod 666 /dev/kvm   (or add your user to group 'kvm')"
+      echo "  Or set QCOW2_ALLOW_TCG=1 to force slow software emulation."
+      exit 1
     else
       echo "ERROR! Native arch build requires /dev/kvm on Linux (or HVF on macOS)."
       echo "Set QCOW2_ALLOW_TCG=1 to force slow software emulation."
