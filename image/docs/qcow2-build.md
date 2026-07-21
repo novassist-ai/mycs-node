@@ -175,8 +175,10 @@ mycs-releases/mycs-node/image/dev/mycs-node-image_latest_amd64.qcow2
 
 - `<channel>` is `dev` or `prod`.
 - Arch is part of the object name (flat under the channel prefix).
-- `mycs-node-image_latest_<ARCH>.qcow2` is a **0-byte** placeholder with
-  `x-amz-website-redirect-location` pointing at the versioned object.
+- `mycs-node-image_latest_<ARCH>.qcow2` is a **full copy** of the current
+  versioned object (stable download URL). S3 website-redirect metadata is
+  **not** used: it only works on the website endpoint
+  (`s3-website-…`), not on `https://bucket.s3.region.amazonaws.com/…`.
 - Uploads do **not** set object ACLs (`novassist-public` has ACLs disabled).
   `publish-qcow2-image.sh` ensures a bucket-policy statement
   (`PublicReadMyCSNodeImages`) allowing public `s3:GetObject` on

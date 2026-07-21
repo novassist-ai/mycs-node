@@ -254,27 +254,27 @@ jobs:
           git tag -a "${build_tag}" -m "Bastion image dev build ${build_tag}: last commit => ${last_commit_msg}"
           git push origin "refs/tags/${build_tag}"
 
-  trigger-vpn-node-builder:
-    needs:
-      - create-build-tag
-      # - build-aws-image
-      - build-qcow2-image
-      - tag_dev_build
-    if: github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
+  # trigger-vpn-node-builder:
+  #   needs:
+  #     - create-build-tag
+  #     # - build-aws-image
+  #     - build-qcow2-image
+  #     - tag_dev_build
+  #   if: github.ref == 'refs/heads/dev'
+  #   runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        shell: bash
+  #   defaults:
+  #     run:
+  #       shell: bash
 
-    steps:
-      - name: Trigger vpn-node-builder Docker build
-        uses: benc-uk/workflow-dispatch@v1
-        with:
-          workflow: build-vpn-node-builder-dev.yml
-          ref: ${{ github.ref }}
-          token: ${{ github.token }}
-          inputs: |
-            {
-              "bastion_image_name": "${{ needs.create-build-tag.outputs.bastion_image_name }}"
-            }
+  #   steps:
+  #     - name: Trigger vpn-node-builder Docker build
+  #       uses: benc-uk/workflow-dispatch@v1
+  #       with:
+  #         workflow: build-vpn-node-builder-dev.yml
+  #         ref: ${{ github.ref }}
+  #         token: ${{ github.token }}
+  #         inputs: |
+  #           {
+  #             "bastion_image_name": "${{ needs.create-build-tag.outputs.bastion_image_name }}"
+  #           }
