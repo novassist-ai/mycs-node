@@ -3,6 +3,14 @@ concurrency: build-image-dev
 
 on:
   workflow_dispatch:
+    inputs:
+      build_arm64:
+        description: Build arm64 qcow2 (skip by default — TCG is very slow without KVM on arm runners)
+        type: choice
+        options:
+          - skip
+          - build
+        default: skip
   push:
     branches: [dev]
     paths:
@@ -108,10 +116,119 @@ jobs:
           build/publish-aws-image.sh us-east-1 "$DEV_BUILD" \
             "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
+  # Build matrix at runtime — job-level `if` cannot reference `matrix`.
+  # amd64 → ubuntu-24.04 (x86_64); arm64 → ubuntu-24.04-arm (aarch64) only.
+  qcow2-matrix:
+    needs: create-build-tag
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - id: matrix
+        run: |
+          include='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
+          # push has no inputs → skip; workflow_dispatch defaults to skip.
+          if [[ "${{ github.event.inputs.build_arm64 }}" == "build" ]]; then
+            # Native arm64 runner — never build arm guests on ubuntu-24.04 (x86_64).
+            include='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
+          fi
+          echo "include=${include}" >> "$GITHUB_OUTPUT"
+          echo "qcow2 matrix: ${include}"
+
+  build-qcow2-image:
+    needs:
+      - create-build-tag
+      - qcow2-matrix
+    if: github.ref == 'refs/heads/dev'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.qcow2-matrix.outputs.include) }}
+    runs-on: ${{ matrix.runner }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: image
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      QCOW2_S3_BUCKET: novassist-public
+      DEV_BUILD: ${{ needs.create-build-tag.outputs.version }}
+      IS_DEV_BUILD: yes
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Packer
+        uses: hashicorp/setup-packer@v3
+
+      - name: Install QEMU and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-system-arm qemu-utils qemu-efi-aarch64 \
+            xorriso jq curl ca-certificates
+          # GitHub CLI (release artifact download)
+          if ! command -v gh >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends gh
+          fi
+
+      - name: Enable KVM (GitHub nested virt)
+        run: |
+          # Official recipe: https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          sudo chmod 666 /dev/kvm 2>/dev/null || true
+          ls -l /dev/kvm || echo "no /dev/kvm"
+
+          qemu_bin=qemu-system-x86_64
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            qemu_bin=qemu-system-aarch64
+          fi
+
+          # Prove -accel kvm works (device node alone is not enough).
+          if [[ -r /dev/kvm && -w /dev/kvm ]] \
+            && printf 'quit\n' | timeout 15 "$qemu_bin" \
+                 -accel kvm -cpu host -machine none -m 32 \
+                 -nographic -display none -nodefaults -monitor stdio \
+                 >/tmp/qemu-kvm-smoke.out 2>/tmp/qemu-kvm-smoke.err; then
+            echo "KVM smoke test OK ($qemu_bin)"
+          else
+            echo "::warning::KVM not usable; falling back to TCG"
+            cat /tmp/qemu-kvm-smoke.err 2>/dev/null || true
+            echo "QCOW2_ALLOW_TCG=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Delete prior qcow2 objects (dev, this arch)
+        run: |
+          build/delete-qcow2-images.sh --all dev "${{ matrix.arch }}"
+
+      - name: Build qcow2
+        env:
+          PACKER_LOG: "1"
+          # Leave headroom on hosted runners (16 GiB amd64 / less on arm).
+          QCOW2_MEMORY: "4096"
+          QCOW2_CPUS: "2"
+        run: |
+          build/build-qcow2-image.sh "$DEV_BUILD" "${{ matrix.arch }}"
+
+      - name: Publish qcow2 to S3
+        run: |
+          build/publish-qcow2-image.sh "$DEV_BUILD" "${{ matrix.arch }}" dev
+
   tag_dev_build:
     needs:
       - create-build-tag
       - build-aws-image
+      - build-qcow2-image
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     # Push only the build tag (not the branch): --follow-tags races with other pushes.
@@ -141,6 +258,7 @@ jobs:
     needs:
       - create-build-tag
       - build-aws-image
+      - build-qcow2-image
       - tag_dev_build
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
