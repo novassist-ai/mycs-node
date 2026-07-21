@@ -9,12 +9,11 @@
 # ARCH:     amd64 | arm64 | all   (default: all)
 #
 # Without --all, lists matching objects and exits 0 (dry-run).
-# With --all, deletes versioned images and the latest placeholder for the
-# selected arch(es) under the channel prefix (publish recreates latest).
+# With --all, deletes versioned images for the selected arch(es) under the
+# channel prefix.
 #
 # Object layout (flat under channel):
 #   mycs-releases/mycs-node/image/<CHANNEL>/mycs-node-image_<VERSION>_<ARCH>.qcow2
-#   mycs-releases/mycs-node/image/<CHANNEL>/mycs-node-image_latest_<ARCH>.qcow2
 #
 # Env:
 #   QCOW2_S3_BUCKET   (default: novassist-public)

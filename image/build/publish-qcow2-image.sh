@@ -1,7 +1,6 @@
 #!/bin/bash
 #
-# Upload a built MyCS node qcow2 image to s3://novassist-public and point a
-# zero-byte "latest" object at it via website redirect metadata.
+# Upload a built MyCS node qcow2 image to s3://novassist-public.
 #
 # USAGE:
 #   ./build/publish-qcow2-image.sh <VERSION> <ARCH> <CHANNEL>
@@ -11,19 +10,12 @@
 #
 # Object layout:
 #   s3://novassist-public/mycs-releases/mycs-node/image/<CHANNEL>/mycs-node-image_<VERSION>_<ARCH>.qcow2
-#   s3://novassist-public/mycs-releases/mycs-node/image/<CHANNEL>/mycs-node-image_latest_<ARCH>.qcow2
-#     (full copy of the versioned object — stable public download URL)
 #
 # Public downloadability: Object Ownership is BucketOwnerEnforced (no ACLs).
 # This script ensures a bucket-policy statement allowing public s3:GetObject on
 #   arn:aws:s3:::<bucket>/mycs-releases/mycs-node/image/*
 # if that statement is not already present. Block Public Access must allow
 # public bucket policies for this to take effect.
-#
-# "Latest" pointer: a full server-side copy of the versioned object to
-#   mycs-node-image_latest_<ARCH>.qcow2
-# (S3 WebsiteRedirectLocation only works on the website endpoint, not the
-# REST URL https://bucket.s3.region.amazonaws.com/... that clients use.)
 #
 # Before upload, any existing object at the versioned key is deleted so a
 # re-run of the same VERSION/ARCH (e.g. after a sibling job failed) replaces
@@ -89,7 +81,6 @@ LOCAL_IMAGE="$BUILD_DIR/.build/qcow2/${IMAGE_NAME}.qcow2"
 IMAGE_PREFIX="mycs-releases/mycs-node/image"
 PREFIX="${IMAGE_PREFIX}/${CHANNEL}"
 VERSIONED_KEY="${PREFIX}/${IMAGE_NAME}_${TARGET_ARCH}.qcow2"
-LATEST_KEY="${PREFIX}/mycs-node-image_latest_${TARGET_ARCH}.qcow2"
 PUBLIC_BASE="https://${BUCKET}.s3.${AWS_DEFAULT_REGION}.amazonaws.com"
 PUBLIC_RESOURCE_ARN="arn:aws:s3:::${BUCKET}/${IMAGE_PREFIX}/*"
 PUBLIC_POLICY_SID="PublicReadMyCSNodeImages"
@@ -170,9 +161,8 @@ if [[ ! -f "$LOCAL_IMAGE" ]]; then
 fi
 
 echo "Publishing ${LOCAL_IMAGE}"
-echo "  bucket:    s3://${BUCKET}"
-echo "  versioned: s3://${BUCKET}/${VERSIONED_KEY}"
-echo "  latest:    s3://${BUCKET}/${LATEST_KEY} (copy of versioned object)"
+echo "  bucket: s3://${BUCKET}"
+echo "  key:    s3://${BUCKET}/${VERSIONED_KEY}"
 
 qcow2::ensure_public_read_policy
 
@@ -182,10 +172,13 @@ if aws s3api head-object --bucket "$BUCKET" --key "$VERSIONED_KEY" >/dev/null 2>
   aws s3 rm "s3://${BUCKET}/${VERSIONED_KEY}"
 fi
 
-# Clean legacy layout (arch as path segment) for the same VERSION if present.
-LEGACY_VERSIONED_KEY="${PREFIX}/${TARGET_ARCH}/${IMAGE_NAME}.qcow2"
-LEGACY_LATEST_KEY="${PREFIX}/${TARGET_ARCH}/mycs-node-image.qcow2"
-for legacy in "$LEGACY_VERSIONED_KEY" "$LEGACY_LATEST_KEY"; do
+# Clean legacy layouts if present (arch path segment; old *_latest_* copies).
+LEGACY_KEYS=(
+  "${PREFIX}/${TARGET_ARCH}/${IMAGE_NAME}.qcow2"
+  "${PREFIX}/${TARGET_ARCH}/mycs-node-image.qcow2"
+  "${PREFIX}/mycs-node-image_latest_${TARGET_ARCH}.qcow2"
+)
+for legacy in "${LEGACY_KEYS[@]}"; do
   if aws s3api head-object --bucket "$BUCKET" --key "$legacy" >/dev/null 2>&1; then
     echo "Removing legacy object s3://${BUCKET}/${legacy}"
     aws s3 rm "s3://${BUCKET}/${legacy}"
@@ -195,12 +188,5 @@ done
 aws s3 cp "$LOCAL_IMAGE" "s3://${BUCKET}/${VERSIONED_KEY}" \
   --content-type application/octet-stream
 
-# Stable "latest" URL: full object copy (works on REST HTTPS endpoints).
-# Website-redirect metadata does NOT apply to s3.<region>.amazonaws.com URLs.
-aws s3 cp "s3://${BUCKET}/${VERSIONED_KEY}" "s3://${BUCKET}/${LATEST_KEY}" \
-  --content-type application/octet-stream \
-  --metadata-directive REPLACE
-
 echo "Published qcow2 ${IMAGE_NAME} (${TARGET_ARCH}/${CHANNEL})."
-echo "  versioned: ${PUBLIC_BASE}/${VERSIONED_KEY}"
-echo "  latest:    ${PUBLIC_BASE}/${LATEST_KEY}"
+echo "  ${PUBLIC_BASE}/${VERSIONED_KEY}"

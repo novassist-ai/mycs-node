@@ -163,22 +163,16 @@ Credentials: `DEV_AWS_ACCESS_KEY_ID` / `DEV_AWS_SECRET_ACCESS_KEY` (dev **and** 
 
 ```
 s3://novassist-public/mycs-releases/mycs-node/image/<channel>/mycs-node-image_<VERSION>_<ARCH>.qcow2
-s3://novassist-public/mycs-releases/mycs-node/image/<channel>/mycs-node-image_latest_<ARCH>.qcow2
 ```
 
 Example:
 
 ```
 mycs-releases/mycs-node/image/dev/mycs-node-image_0.2.0-dev1_amd64.qcow2
-mycs-releases/mycs-node/image/dev/mycs-node-image_latest_amd64.qcow2
 ```
 
 - `<channel>` is `dev` or `prod`.
 - Arch is part of the object name (flat under the channel prefix).
-- `mycs-node-image_latest_<ARCH>.qcow2` is a **full copy** of the current
-  versioned object (stable download URL). S3 website-redirect metadata is
-  **not** used: it only works on the website endpoint
-  (`s3-website-…`), not on `https://bucket.s3.region.amazonaws.com/…`.
 - Uploads do **not** set object ACLs (`novassist-public` has ACLs disabled).
   `publish-qcow2-image.sh` ensures a bucket-policy statement
   (`PublicReadMyCSNodeImages`) allowing public `s3:GetObject` on
@@ -192,7 +186,7 @@ mycs-releases/mycs-node/image/dev/mycs-node-image_latest_amd64.qcow2
 | Script | Role |
 |--------|------|
 | `build/build-qcow2-image.sh` | Local / CI Packer build |
-| `build/publish-qcow2-image.sh <ver> <arch> <channel>` | Upload versioned object + latest redirect |
+| `build/publish-qcow2-image.sh <ver> <arch> <channel>` | Upload versioned object |
 | `build/delete-qcow2-images.sh [--all] <channel> [arch]` | List (default) or delete (`--all`) |
 
 **Dev CI** runs `delete-qcow2-images.sh --all dev <arch>` before each arch upload
