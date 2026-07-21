@@ -177,7 +177,11 @@ mycs-releases/mycs-node/image/dev/mycs-node-image_latest_amd64.qcow2
 - Arch is part of the object name (flat under the channel prefix).
 - `mycs-node-image_latest_<ARCH>.qcow2` is a **0-byte** placeholder with
   `x-amz-website-redirect-location` pointing at the versioned object.
-- Uploads use `--acl public-read` (public HTTPS download via the S3 object URL).
+- Uploads do **not** set object ACLs (`novassist-public` has ACLs disabled).
+  `publish-qcow2-image.sh` ensures a bucket-policy statement
+  (`PublicReadMyCSNodeImages`) allowing public `s3:GetObject` on
+  `mycs-releases/mycs-node/image/*` when missing. Block Public Access must
+  allow public bucket policies.
 - Publish deletes any existing object at the same VERSION/ARCH key first so
   workflow retries replace a prior upload cleanly.
 

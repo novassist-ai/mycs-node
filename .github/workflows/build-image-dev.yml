@@ -117,6 +117,7 @@ jobs:
   #           "us-east-2 us-west-2 eu-west-1 eu-west-2 eu-central-2 af-south-1 ap-south-1 ap-southeast-1"
 
   # Build matrix at runtime — job-level `if` cannot reference `matrix`.
+  # amd64 → ubuntu-24.04 (x86_64); arm64 → ubuntu-24.04-arm (aarch64) only.
   qcow2-matrix:
     needs: create-build-tag
     if: github.ref == 'refs/heads/dev'
@@ -129,6 +130,7 @@ jobs:
           include='[{"arch":"amd64","runner":"ubuntu-24.04"}]'
           # push has no inputs → skip; workflow_dispatch defaults to skip.
           if [[ "${{ github.event.inputs.build_arm64 }}" == "build" ]]; then
+            # Native arm64 runner — never build arm guests on ubuntu-24.04 (x86_64).
             include='[{"arch":"amd64","runner":"ubuntu-24.04"},{"arch":"arm64","runner":"ubuntu-24.04-arm"}]'
           fi
           echo "include=${include}" >> "$GITHUB_OUTPUT"
