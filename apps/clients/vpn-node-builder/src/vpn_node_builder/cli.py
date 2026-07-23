@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import typer
 
 from vpn_node_builder import __version__
@@ -18,9 +20,14 @@ app = typer.Typer(
 )
 
 
+def _resolve_version() -> str:
+    """Prefer image build version (Docker ENV ``version``) over package default."""
+    return os.environ.get("version") or os.environ.get("VPNB_VERSION") or __version__
+
+
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(f"vpnb {__version__}")
+        typer.echo(f"vpnb {_resolve_version()}")
         raise typer.Exit()
 
 

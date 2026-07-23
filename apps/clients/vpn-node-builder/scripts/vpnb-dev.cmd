@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 set "REGISTRY_IMAGE=ghcr.io/novassist-ai/vpn-node-builder"
 if not defined VPNB_IMAGE (
   if defined VPN_NODE_BUILDER_IMAGE (
@@ -29,6 +29,8 @@ if /I "%~1"=="update" (
   docker pull %VPNB_IMAGE%
   exit /b %ERRORLEVEL%
 )
+if /I "%~1"=="--version" goto :show_version
+if /I "%~1"=="-V" goto :show_version
 docker image inspect %VPNB_IMAGE% >nul 2>&1
 if errorlevel 1 (
   echo Image '%VPNB_IMAGE%' not found locally; pulling...
@@ -40,3 +42,27 @@ if not defined VPNB_WORKSPACE_NAME (
 )
 docker run --privileged --rm -it -p 4495:4495 -p 4495:4495/udp -e VPNB_WORKSPACE_NAME=%VPNB_WORKSPACE_NAME% -v "%CD%:/work" -w /work %VPNB_IMAGE% %*
 endlocal
+exit /b %ERRORLEVEL%
+
+:show_version
+docker image inspect %VPNB_IMAGE% >nul 2>&1
+if errorlevel 1 (
+  echo Image '%VPNB_IMAGE%' not found locally; pulling...
+  docker pull %VPNB_IMAGE%
+  if errorlevel 1 exit /b %ERRORLEVEL%
+)
+if defined VPNB_LAUNCHER_VERSION (
+  set "LAUNCHER_VER=%VPNB_LAUNCHER_VERSION%"
+) else (
+  set "LAUNCHER_VER=unknown"
+)
+set "IMAGE_VER="
+for /f "usebackq delims=" %%V in (`docker image inspect %VPNB_IMAGE% --format "{{index .Config.Labels \"org.opencontainers.image.version\"}}" 2^>nul`) do set "IMAGE_VER=%%V"
+if "!IMAGE_VER!"=="" (
+  for /f "usebackq tokens=1* delims==" %%A in (`docker image inspect %VPNB_IMAGE% --format "{{range .Config.Env}}{{println .}}{{end}}" 2^>nul ^| findstr /B "version="`) do set "IMAGE_VER=%%B"
+)
+if "!IMAGE_VER!"=="" set "IMAGE_VER=unknown"
+echo launcher !LAUNCHER_VER!
+echo image    !IMAGE_VER! ^(%VPNB_IMAGE%^)
+endlocal
+exit /b 0

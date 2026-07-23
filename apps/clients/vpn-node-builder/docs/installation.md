@@ -51,12 +51,26 @@ Host launcher helpers (not Typer commands):
 | _(none)_ | Auto-pulls the channel image if it is not present locally |
 | `pull` | `docker pull` for the channel image |
 | `update` | Deletes the local image, then pulls a fresh copy |
+| `--version` / `-V` | Homebrew launcher version + Docker image version |
 
 The formula installs the launcher as **`vpnb`** and a symlink **`vpnb-dev`**. It does
 **not** install Python, Terraform, or cloud CLIs on the host — those run inside
 the container. The stable formula tracks the `vpnb_X.Y.Z` git tag (launcher
 script); Docker images are still pulled as `:latest` / `:dev` (or a pin via
 `VPNB_IMAGE`).
+
+`vpnb --version` and `vpnb-dev --version` print both the Homebrew formula
+version and the channel’s Docker image build version:
+
+```text
+$ vpnb --version
+launcher 0.6.0
+image    0.6.0 (ghcr.io/novassist-ai/vpn-node-builder:latest)
+
+$ vpnb-dev --version
+launcher 0.6.0
+image    0.5.0-dev0 (ghcr.io/novassist-ai/vpn-node-builder:dev)
+```
 
 After each successful **prod** vpn-node-builder build, CI bumps
 [`novassist-ai/homebrew-tap`](https://github.com/novassist-ai/homebrew-tap)
