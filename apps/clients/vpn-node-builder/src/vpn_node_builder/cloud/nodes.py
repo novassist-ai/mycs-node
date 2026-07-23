@@ -65,8 +65,13 @@ def parse_node_from_output(
         private_ip = str(first.get("private_ip") or "")
         address = f"{private_ip}[private]" if private_ip else ""
 
-    version_raw = _json_get(data, "cb_node_version", "value")
-    version = version_raw.rsplit("_", 1)[-1] if "_" in version_raw else ""
+    version_raw = _json_get(data, "cb_node_version", "value").strip()
+    # Terraform already emits the trailing segment of bastion_image_name
+    # (e.g. "0.2.0-dev1"). Older outputs may still be "prefix_1.2.3".
+    if "_" in version_raw:
+        version = version_raw.rsplit("_", 1)[-1]
+    else:
+        version = version_raw
     vpn_type = _json_get(data, "cb_vpn_type", "value")
     instance_ip = str(first.get("public_ip") or first.get("private_ip") or "")
 
