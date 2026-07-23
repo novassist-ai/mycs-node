@@ -49,6 +49,26 @@ def test_parse_node_from_output(tmp_path: Path) -> None:
     assert record.version == "1.2.3"
 
 
+def test_parse_node_version_without_prefix(tmp_path: Path) -> None:
+    """cb_node_version from current cookbooks is already the version segment."""
+    output = tmp_path / "sandbox" / "aws" / "us-east-1" / "output.json"
+    output.parent.mkdir(parents=True)
+    output.write_text(
+        json.dumps(
+            {
+                "cb_managed_instances": {
+                    "value": [{"name": "n1", "id": "i-1", "public_ip": "1.2.3.4"}]
+                },
+                "cb_node_version": {"value": "0.2.0-dev1"},
+                "cb_vpn_type": {"value": "ipsec"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = parse_node_from_output(output, workspace_root=tmp_path)
+    assert record.version == "0.2.0-dev1"
+
+
 def test_parse_vagrant_vbox_without_region(tmp_path: Path) -> None:
     output = tmp_path / "sandbox" / CLOUD_VAGRANT_VBOX / "output.json"
     output.parent.mkdir(parents=True)

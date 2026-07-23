@@ -226,6 +226,9 @@ node if it is stopped, waits until running, then executes the tunnel script.
 
 Interactive table of deployments discovered from `.workspace/run/**/output.json`.
 
+Columns include node type, cloud, region, address, status, and **Version**
+(`cb_node_version` from each node's `output.json`).
+
 Select a node, then an action:
 
 1. Update (deploy with `-u`)
