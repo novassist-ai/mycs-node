@@ -27,6 +27,21 @@ function Ensure-Image {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+function Show-Version {
+    Ensure-Image
+    $launcherVer = if ($env:VPNB_LAUNCHER_VERSION) { $env:VPNB_LAUNCHER_VERSION } else { "unknown" }
+    $imageVer = (& docker image inspect $Image --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>$null)
+    if (-not $imageVer) {
+        $imageVer = (& docker image inspect $Image --format '{{range .Config.Env}}{{println .}}{{end}}' 2>$null |
+            Where-Object { $_ -like 'version=*' } |
+            Select-Object -First 1)
+        if ($imageVer) { $imageVer = $imageVer.Substring('version='.Length) }
+    }
+    if (-not $imageVer) { $imageVer = "unknown" }
+    Write-Output "launcher $launcherVer"
+    Write-Output "image    $imageVer ($Image)"
+}
+
 if ($NbArgs.Count -ge 1 -and $NbArgs[0] -eq "pull") {
     Write-Host "Pulling ${Image}..."
     & docker pull $Image
@@ -42,6 +57,11 @@ if ($NbArgs.Count -ge 1 -and $NbArgs[0] -eq "update") {
     Write-Host "Pulling ${Image}..."
     & docker pull $Image
     exit $LASTEXITCODE
+}
+
+if ($NbArgs.Count -ge 1 -and ($NbArgs[0] -eq "--version" -or $NbArgs[0] -eq "-V")) {
+    Show-Version
+    exit 0
 }
 
 Ensure-Image

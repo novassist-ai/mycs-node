@@ -9,14 +9,17 @@
 # Host helpers (not forwarded into the container):
 #   vpnb pull   | vpnb-dev pull   → docker pull (refresh tag)
 #   vpnb update | vpnb-dev update → delete local image, then pull fresh
+#   vpnb --version | -V           → brew/launcher version + docker image version
 
 set -euo pipefail
 
 REGISTRY_IMAGE="${VPNB_REGISTRY_IMAGE:-ghcr.io/novassist-ai/vpn-node-builder}"
+# Set by Homebrew formula install; fall back to brew query or unknown.
+VPNB_LAUNCHER_VERSION="${VPNB_LAUNCHER_VERSION:-}"
 
 cmd=$(basename "$0")
 case "${cmd}" in
-  vpnb-dev|vpnb-dev.*) default_tag=dev ;;
+  vpnb-dev*) default_tag=dev ;;
   *) default_tag=latest ;;
 esac
 
@@ -36,6 +39,43 @@ ensure_image() {
   docker pull "${IMAGE}"
 }
 
+launcher_version() {
+  if [[ -n "${VPNB_LAUNCHER_VERSION}" ]]; then
+    echo "${VPNB_LAUNCHER_VERSION}"
+    return 0
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    local ver
+    ver=$(brew list --versions vpn-node-builder 2>/dev/null | awk '{print $2; exit}') || true
+    if [[ -n "${ver}" ]]; then
+      echo "${ver}"
+      return 0
+    fi
+  fi
+  echo "unknown"
+}
+
+image_version() {
+  local ver
+  ver=$(docker image inspect "${IMAGE}" \
+    --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null || true)
+  if [[ -z "${ver}" || "${ver}" == "<no value>" ]]; then
+    ver=$(docker image inspect "${IMAGE}" \
+      --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+      | sed -n 's/^version=//p' | head -n1) || true
+  fi
+  if [[ -z "${ver}" ]]; then
+    ver="unknown"
+  fi
+  echo "${ver}"
+}
+
+show_version() {
+  ensure_image
+  echo "launcher $(launcher_version)"
+  echo "image    $(image_version) (${IMAGE})"
+}
+
 case "${1:-}" in
   pull)
     echo "Pulling ${IMAGE}..."
@@ -48,6 +88,10 @@ case "${1:-}" in
     fi
     echo "Pulling ${IMAGE}..."
     exec docker pull "${IMAGE}"
+    ;;
+  --version|-V)
+    show_version
+    exit 0
     ;;
 esac
 
